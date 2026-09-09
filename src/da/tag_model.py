@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Any
+from datetime import datetime, timezone
+import math
 
 # 1. Качество данных (Quality)
 class Quality(Enum):
@@ -34,12 +36,17 @@ class Tag:
         Возвращает True, если значение РЕАЛЬНО изменилось (вышло за пределы deadband).
         Возвращает False, если изменение слишком маленькое и его можно игнорировать.
         """
+
+        if new_value is None or (isinstance(new_value, float) and math.isnan(new_value)):
+            self.quality = Quality.UNCERTAIN # или BAD
+            return False
+
         # Если качество было BAD, мы обязаны принять первое же полученное значение
         if self.quality == Quality.BAD:
             self.previous_value = self.value
             self.value = new_value
             self.quality = Quality.GOOD
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
             return True
         
         # Проверка мертвой зоны (Deadband)
