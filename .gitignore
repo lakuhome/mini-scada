@@ -1,10 +1,13 @@
 # Виртуальное окружение
+.venv/
 venv/
 env/
 
 # Кэш питона
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
 
 # База данных
 *.db
@@ -13,4 +16,8 @@ __pycache__/
 # Файлы IDE и редакторов
 .vscode/
 .idea/
+.DS_Store
+
+# ОС
+Thumbs.db
 .DS_Store
