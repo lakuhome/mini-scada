@@ -150,7 +150,37 @@ class VirtualPLC:
             )
 
 if __name__ == "__main__":
-    plc = VirtualPLC(port=5020)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Mini-SCADA Virtual PLC"
+    )
+
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="PLC host",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5020,
+        help="PLC Modbus TCP port",
+    )
+
+    args = parser.parse_args()
+
+    print("Mini-SCADA Virtual PLC")
+    print("Version: 0.1.0")
+    print(f"Listening: {args.host}:{args.port}")
+    print("Status: READY")
+
+    plc = VirtualPLC(
+        host=args.host,
+        port=args.port,
+    )
+
     try:
         asyncio.run(plc.run())
     except KeyboardInterrupt:
