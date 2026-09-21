@@ -5,6 +5,8 @@ env/
 # Кэш питона
 __pycache__/
 *.pyc
+.pytest_cache/
+*.log
 
 # База данных
 *.db
@@ -14,3 +16,6 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Runner wrapper
+powershell.bat

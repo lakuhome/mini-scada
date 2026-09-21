@@ -2,7 +2,12 @@ import asyncio
 import struct
 import logging
 
-logging.basicConfig(level=logging.INFO)
+import math
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+)
 logger = logging.getLogger("VirtualPLC")
 
 class VirtualPLC:
@@ -11,18 +16,43 @@ class VirtualPLC:
         self.port = port
         self.registers = [0] * 100 
         self._running = False
+        self._server = None
+
+        # Начальные значения технологических параметров:
+        # Регистр 0: Температура котла (масштаб x10, 750 = 75.0 °C)
+        self.registers[0] = 750
+        # Регистр 1: Давление в контуре (масштаб x100, 210 = 2.10 бар)
+        self.registers[1] = 210
+        # Регистр 2: Состояние насоса №1 (1 = ВКЛ, 0 = ВЫКЛ)
+        self.registers[2] = 1
+        # Регистр 3: Код аварии (0 = норма)
+        self.registers[3] = 0
+        # Регистр 4: Уставка температуры (800 = 80.0 °C)
+        self.registers[4] = 800
+
+    def stop(self):
+        """Остановка симулятора"""
+        self._running = False
+        if self._server:
+            self._server.close()
 
     async def _simulate_physics(self):
         """
-        Изолированный цикл, который 'живет' своей жизнью.
-        Меняет значения в регистрах, имитируя датчики.
+        Изолированный цикл имитации физического процесса.
+        Моделирует небольшие колебания температуры вокруг уставки.
         """
         logger.info("Physics engine started...")
+        step = 0
         while self._running:
-            self.registers[0] += 1 
-            if self.registers[0] > 65535:
-                self.registers[0] = 0
-            
+            step += 1
+            # Плавные синусоидальные микроколебания температуры (+/- 1.5 °C)
+            fluctuation = int(15 * math.sin(step * 0.1))
+            self.registers[0] = 750 + fluctuation
+
+            # Небольшие флуктуации давления (+/- 0.05 бар)
+            press_fluct = int(5 * math.cos(step * 0.08))
+            self.registers[1] = 210 + press_fluct
+
             await asyncio.sleep(1.0)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
