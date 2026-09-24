@@ -3,18 +3,30 @@ import struct
 import logging
 import argparse
 
+from src.core.bus import InMemoryBus
+from src.core.models import Tag
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PollingEngine")
 
 class PollingEngine:
-    def __init__(self, host: str = "127.0.0.1", port: int = 5020, interval: float = 1.0):
+    TAG_IDS = (
+            "TEMP_01",
+            "TEMP_02",
+            "TEMP_03",
+            "TEMP_04",
+            "TEMP_05",
+        )
+    
+    def __init__(self, host: str = "127.0.0.1", port: int = 5020, interval: float = 1.0, bus: InMemoryBus | None = None):
         self.host = host
         self.port = port
         self.interval = interval
         self._running = False
         self.transaction_id = 1
+        self.bus = bus if bus is not None else InMemoryBus()
+        self.tags = {tag_id: Tag(id=tag_id) for tag_id in self.TAG_IDS}
         
-        # В будущем здесь появится In-Memory Bus, куда мы будем складывать результаты
 
     async def _read_registers(self, writer: asyncio.StreamWriter, reader: asyncio.StreamReader):
         """
@@ -22,8 +34,7 @@ class PollingEngine:
         """
         start_address = 0
         register_count = 5
-        
-        pdu_length = 5
+    
 
         length = 6
         unit_id = 1
@@ -52,6 +63,13 @@ class PollingEngine:
             
             values = struct.unpack(data_format, pdu_bytes[2:])
             logger.info(f"Received values: {values}")
+
+            for tag_id, value in zip(self.TAG_IDS, values):
+                tag = self.tags[tag_id]
+                tag.update_value(value)
+                self.bus.publish(tag)
+
+            
             return values
         else:
             logger.warning(f"Unexpected Function Code: {resp_fc}")
