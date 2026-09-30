@@ -6,8 +6,11 @@ env/
 # Кэш питона
 __pycache__/
 *.py[cod]
+*.pyc
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+*.log
 
 # База данных
 *.db
@@ -21,3 +24,7 @@ __pycache__/
 # ОС
 Thumbs.db
 .DS_Store
+
+# Runner wrapper & temp
+powershell.bat
+base
