@@ -1,6 +1,7 @@
 import asyncio
 import struct
 import logging
+import argparse
 
 from src.core.bus import InMemoryBus
 from src.core.models import Tag
@@ -136,7 +137,43 @@ class PollingEngine:
 
 
 if __name__ == "__main__":
-    engine = PollingEngine()
+
+    parser = argparse.ArgumentParser(
+        description="Mini-SCADA Polling Engine"
+    )
+
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="PLC host",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5020,
+        help="PLC Modbus TCP port",
+    )
+
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Polling interval in seconds",
+    )
+
+    args = parser.parse_args()
+
+    print("Mini-SCADA Polling Engine")
+    print("Version: 0.1.0")
+    print(f"Connecting to: {args.host}:{args.port}")
+
+    engine = PollingEngine(
+        host=args.host,
+        port=args.port,
+        interval=args.interval,
+    )
+
     try:
         asyncio.run(engine.run())
     except KeyboardInterrupt:

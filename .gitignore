@@ -1,11 +1,15 @@
 # Виртуальное окружение
+.venv/
 venv/
 env/
 
 # Кэш питона
 __pycache__/
+*.py[cod]
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.log
 
 # База данных
@@ -17,5 +21,10 @@ __pycache__/
 .idea/
 .DS_Store
 
-# Runner wrapper
+# ОС
+Thumbs.db
+.DS_Store
+
+# Runner wrapper & temp
 powershell.bat
+base
