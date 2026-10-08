@@ -28,3 +28,7 @@ Thumbs.db
 # Runner wrapper & temp
 powershell.bat
 base
+
+# Фронтенд
+frontend/node_modules/
+frontend/dist/
