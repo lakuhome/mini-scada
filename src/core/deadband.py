@@ -32,6 +32,9 @@ class DeadbandFilter:
         Returns:
             bool: True, если отсчет подлежит сохранению; False, если отсчет является шумом.
         """
+        if not isinstance(tag, Tag):
+            raise TypeError(f"Ожидается объект Tag, получен {type(tag).__name__}")
+
         # Аварийные события (BAD) сохраняются в архив безусловно
         if getattr(tag, 'quality', None) == "BAD":
             self._last_values[tag.id] = tag.value
