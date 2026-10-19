@@ -2,11 +2,36 @@ from .models import Tag
 
 
 class DeadbandFilter:
+    """
+    Фильтр технологического шума датчиков (зона нечувствительности).
+
+    Отсекает микроколебания технологических параметров, если абсолютное
+    отклонение от последнего сохраненного значения меньше заданного порога.
+
+    Attributes:
+        threshold: Величина зоны нечувствительности в единицах измерения датчика.
+    """
+
     def __init__(self, threshold: float):
+        """
+        Инициализирует фильтр с заданным порогом.
+
+        Args:
+            threshold: Порог нечувствительности (вещественное число >= 0).
+        """
         self.threshold = threshold
         self._last_values: dict[str, float] = {}
 
     def should_store(self, tag: Tag) -> bool:
+        """
+        Определяет необходимость сохранения отсчета тега в базу данных.
+
+        Args:
+            tag: Объект измерения Tag с полями id, value, timestamp, quality.
+
+        Returns:
+            bool: True, если отсчет подлежит сохранению; False, если отсчет является шумом.
+        """
         if tag.id not in self._last_values:
             self._last_values[tag.id] = tag.value
             return True
