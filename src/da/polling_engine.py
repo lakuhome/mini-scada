@@ -44,13 +44,18 @@ class PollingEngine:
                 self.bus.publish(Tag(id=tag_id, value=0.0, quality="BAD"))
 
     def _mark_all_tags_bad(self):
-        """Помечает все опрашиваемые теги как недостоверные (BAD) при потере связи."""
+        """
+        Помечает все опрашиваемые теги как недостоверные (BAD) при потере связи (требование FR-01.1).
+
+        Гарантирует, что при разрыве TCP-соединения или сбое контроллера оператор не увидит
+        устаревшие значения под видом актуальных технологических данных.
+        """
         for tag_id in self.tag_map.values():
             tag = self.bus.get(tag_id)
             if tag:
                 tag.set_bad_quality()
                 self.bus.publish(tag)
-        logger.warning("All tags set to quality: BAD due to communication failure.")
+        logger.warning("All tags set to quality: BAD due to communication failure (FR-01.1).")
 
     async def _read_registers(self, writer: asyncio.StreamWriter, reader: asyncio.StreamReader):
         """
