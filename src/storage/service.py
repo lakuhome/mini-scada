@@ -9,10 +9,12 @@ class StorageService:
         bus: InMemoryBus,
         deadband: DeadbandFilter,
         database: Database,
+        filter=None
     ):
         self.bus = bus
         self.deadband = deadband
         self.database = database
+        self.filter = filter if filter is not None else DeadbandFilter(threshold=0.5)
 
     async def process_tag(self, tag_id: str) -> bool:
         tag = self.bus.get(tag_id)
