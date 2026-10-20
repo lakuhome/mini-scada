@@ -36,9 +36,7 @@ deadband = DeadbandFilter(
     threshold=1.0,
 )
 
-database = Database(
-    "scada.db",
-)
+database = Database()
 
 storage_service = StorageService(
     bus=bus,
