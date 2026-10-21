@@ -5,9 +5,6 @@ import argparse
 
 from src.core.bus import InMemoryBus
 from src.core.models import Tag
-from src.core.deadband import DeadbandFilter
-from src.storage.database import Database
-from src.storage.service import StorageService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,9 +29,6 @@ class PollingEngine:
         interval: float = 1.0,
         bus: InMemoryBus | None = None,
         tag_map: dict[int, str] | None = None,
-        storage_service: StorageService | None = None,
-        database: Database | None = None,
-        deadband_threshold: float = 0.5,
     ):
         self.host = host
         self.port = port
@@ -43,20 +37,6 @@ class PollingEngine:
         self.tag_map = tag_map if tag_map is not None else DEFAULT_TAG_MAP
         self._running = False
         self.transaction_id = 1
-        self.database = (
-            database if database is not None else Database()
-        )
-        self.storage_service = (
-            storage_service
-            if storage_service is not None
-            else StorageService(
-                bus=self.bus,
-                deadband=DeadbandFilter(
-                    threshold=deadband_threshold
-                ),
-                database=self.database,
-            )
-        )
 
         # Инициализируем теги в шине со статусом BAD (до первого успешного опроса)
         for tag_id in self.tag_map.values():
@@ -121,7 +101,6 @@ class PollingEngine:
                         tag = Tag(id=tag_id)
                     tag.update_value(raw_val)
                     self.bus.publish(tag)
-                    await self.storage_service.process_tag(tag_id)
                     logger.debug(f"Updated Tag {tag.id} = {tag.value} [{tag.quality}]")
 
             return values
@@ -135,33 +114,30 @@ class PollingEngine:
 
     async def run(self):
         self._running = True
-        await self.storage_service.database.connect()
         logger.info(f"Starting Polling Engine targeting {self.host}:{self.port} (interval={self.interval}s)")
-
-        try:
-            while self._running:
-                try:
-                    reader, writer = await asyncio.open_connection(self.host, self.port)
-                    logger.info(f"Connected to PLC at {self.host}:{self.port} successfully.")
+        
+        while self._running:
+            try:
+                reader, writer = await asyncio.open_connection(self.host, self.port)
+                logger.info(f"Connected to PLC at {self.host}:{self.port} successfully.")
+                
+                while self._running:
+                    await self._read_registers(writer, reader)
                     
-                    while self._running:
-                        await self._read_registers(writer, reader)
-                        
-                        self.transaction_id = (self.transaction_id + 1) % 65535
-                        await asyncio.sleep(self.interval)
-                        
-                except (ConnectionRefusedError, asyncio.TimeoutError, asyncio.IncompleteReadError) as e:
-                    logger.error(f"Connection lost or refused ({type(e).__name__}). Retrying in 3 seconds...")
-                    self._mark_all_tags_bad()
-                    await asyncio.sleep(3)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.error(f"Unexpected error: {e}")
-                    self._mark_all_tags_bad()
-                    await asyncio.sleep(3)
-        finally:
-            await self.storage_service.database.close()
+                    self.transaction_id = (self.transaction_id + 1) % 65535
+                    await asyncio.sleep(self.interval)
+                    
+            except (ConnectionRefusedError, asyncio.TimeoutError, asyncio.IncompleteReadError) as e:
+                logger.error(f"Connection lost or refused ({type(e).__name__}). Retrying in 3 seconds...")
+                self._mark_all_tags_bad()
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                self._mark_all_tags_bad()
+                await asyncio.sleep(3)
+
         logger.info("Polling Engine stopped.")
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -11,13 +10,8 @@ from src.core.models import Tag
 
 class Database:
 
-    def __init__(self, db_path: str | None = None) -> None:
-        default_path = Path(__file__).resolve().parents[2] / "scada.db"
-
-        self.db_path = Path(
-            db_path or os.getenv("SCADA_DB_PATH", str(default_path))
-        ).expanduser().resolve()
-
+    def __init__(self, db_path: str = "scada.db") -> None:
+        self.db_path = Path(db_path)
         self._connection: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
 

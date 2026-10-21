@@ -28,13 +28,3 @@ class StorageService:
         await self.database.save_tag(tag)
 
         return True
-
-    async def get_history(
-        self,
-        tag_id: str,
-        limit: int = 100,
-    ) -> list[dict]:
-        return await self.database.get_history(
-            tag_id=tag_id,
-            limit=limit,
-        )
