@@ -104,26 +104,3 @@ def test_tc_db_12_boundary_exact_threshold_negative():
     filter_ = DeadbandFilter(threshold=0.5)
     filter_.should_store(make_tag("TEMP_01", 10.0))
     assert filter_.should_store(make_tag("TEMP_01", 9.50)) is True
-
-# --- Подмена реализации (Р4 МДК.01.04 ПЗ2) ---
-
-class PassThroughFilter:
-    """Тестовая подмена фильтра — пропускает все значения."""
-    
-    def should_store(self, tag: Tag) -> bool:
-        """Всегда возвращает True — все значения сохраняются."""
-        return True
-
-
-def test_passthrough_filter_always_returns_true():
-    """PassThroughFilter пропускает все значения без фильтрации."""
-    filter_ = PassThroughFilter()
-    
-    # Первое значение
-    assert filter_.should_store(make_tag("TEMP_01", 20.0)) is True
-    
-    # Микроколебание — всё равно True
-    assert filter_.should_store(make_tag("TEMP_01", 20.01)) is True
-    
-    # Идентичное значение — всё равно True
-    assert filter_.should_store(make_tag("TEMP_01", 20.0)) is True
