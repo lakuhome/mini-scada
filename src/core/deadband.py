@@ -20,26 +20,34 @@ class DeadbandFilter:
             threshold: Порог нечувствительности (вещественное число >= 0).
         """
         self.threshold = threshold
-        self._last_values: dict[str, float] = {}
+        self._last_values: dict[str, tuple[float, str]] = {}
 
     def should_store(self, tag: Tag) -> bool:
-        """
-        Определяет необходимость сохранения отсчета тега в базу данных.
+        last_state = self._last_values.get(tag.id)
 
-        Args:
-            tag: Объект измерения Tag с полями id, value, timestamp, quality.
-
-        Returns:
-            bool: True, если отсчет подлежит сохранению; False, если отсчет является шумом.
-        """
-        if tag.id not in self._last_values:
-            self._last_values[tag.id] = tag.value
+        if last_state is None:
+            self._last_values[tag.id] = (
+                tag.value,
+                tag.quality,
+            )
             return True
 
-        last_value = self._last_values[tag.id]
+        last_value, last_quality = last_state
 
+        # Изменение достоверности сохраняем независимо от deadband.
+        if tag.quality != last_quality:
+            self._last_values[tag.id] = (
+                tag.value,
+                tag.quality,
+            )
+            return True
+
+        # Одинаковые значения отфильтровываются.
         if abs(tag.value - last_value) >= self.threshold:
-            self._last_values[tag.id] = tag.value
+            self._last_values[tag.id] = (
+                tag.value,
+                tag.quality,
+            )
             return True
 
         return False
