@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Query
 from src.da.polling_engine import PollingEngine
 
+
 from src.api.commands import (
     PLCCommandError,
     PLCCommandService,
@@ -24,7 +25,7 @@ from src.api.schemas import (
 
 from src.core.bus import InMemoryBus
 from src.core.deadband import DeadbandFilter
-
+from src.core.safety import SafetyLimits
 from src.storage.database import Database
 from src.storage.service import StorageService
 
@@ -42,6 +43,11 @@ PLC_PORT = int(
 
 POLL_INTERVAL = float(
     os.getenv("SCADA_POLL_INTERVAL", "1.0"),
+)
+
+DEFAULT_SAFETY_LIMITS = SafetyLimits.from_mapping(
+    {},
+    allow_unknown=False,
 )
 
 bus = InMemoryBus()
@@ -91,6 +97,7 @@ def create_app(
     plc_host: str = PLC_HOST,
     plc_port: int = PLC_PORT,
     poll_interval: float = POLL_INTERVAL,
+    safety_limits_instance: SafetyLimits | None = None,
 ) -> FastAPI:
 
     if storage is not None and bus_instance is None:
@@ -146,6 +153,13 @@ def create_app(
             port=plc_port,
         )
     )
+
+    current_safety_limits = (
+        safety_limits_instance
+        if safety_limits_instance is not None
+        else DEFAULT_SAFETY_LIMITS
+    )
+
     current_poller = None
 
     if enable_polling:
@@ -345,6 +359,11 @@ def create_app(
     ) -> CommandResponse:
 
         try:
+
+            current_safety_limits.validate(
+                register=command.register_address,
+                value=command.value,
+            )
 
             await current_commands.write_register(
                 register=command.register_address,
