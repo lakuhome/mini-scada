@@ -18,17 +18,20 @@ class StorageService:
         self.bus = bus
         self.deadband = deadband
         self.database = database
+        self._queue: asyncio.Queue[Tag] | None = None
+
+        self.filter = deadband
 
     async def process_tag(self, tag: Tag) -> bool:
         if not self.filter.should_store(tag):
             return False
 
         await self.database.save_tag(tag)
-
         return True
 
     async def run(self) -> None:
         queue = self.bus.subscribe(replay_current=True)
+        self._queue = queue
 
         try:
             while True:
@@ -51,6 +54,7 @@ class StorageService:
 
         finally:
             self.bus.unsubscribe(queue)
+            self._queue = None
 
     async def get_history(
         self,
@@ -61,3 +65,7 @@ class StorageService:
             tag_id=tag_id,
             limit=limit,
         )
+
+    async def drain(self) -> None:
+        if self._queue is not None:
+            await self._queue.join()
