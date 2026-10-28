@@ -1,11 +1,13 @@
 from __future__ import annotations
-
+import asyncio
+import os
 import logging
 import math
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query
+from src.da.polling_engine import PollingEngine
 
 from src.api.commands import (
     PLCCommandError,
@@ -29,6 +31,18 @@ from src.storage.service import StorageService
 
 logger = logging.getLogger(__name__)
 
+PLC_HOST = os.getenv(
+    "SCADA_PLC_HOST",
+    "127.0.0.1",
+)
+
+PLC_PORT = int(
+    os.getenv("SCADA_PLC_PORT", "5020"),
+)
+
+POLL_INTERVAL = float(
+    os.getenv("SCADA_POLL_INTERVAL", "1.0"),
+)
 
 bus = InMemoryBus()
 
@@ -37,16 +51,8 @@ deadband = DeadbandFilter(
 )
 
 database = Database(
-    "scada.db",
+    os.getenv("SCADA_DB_PATH", "scada.db"),
 )
-
-storage_service = StorageService(
-    bus=bus,
-    deadband=deadband,
-    database=database,
-)
-
-command_service = PLCCommandService()
 
 
 def tag_to_response(tag) -> TagResponse:
@@ -80,24 +86,45 @@ def create_app(
     commands: PLCCommandService | None = None,
     database_instance: Database | None = None,
     deadband_instance: DeadbandFilter | None = None,
+    polling_engine: PollingEngine | None = None,
+    enable_polling: bool = True,
+    plc_host: str = PLC_HOST,
+    plc_port: int = PLC_PORT,
+    poll_interval: float = POLL_INTERVAL,
 ) -> FastAPI:
 
-    current_bus = (
-        bus_instance
-        if bus_instance is not None
-        else bus
-    )
+    if storage is not None and bus_instance is None:
+        current_bus = storage.bus
+    else:
+        current_bus = (
+            bus_instance
+            if bus_instance is not None
+            else bus
+        )
+
+    if storage is not None and storage.bus is not current_bus:
+        raise ValueError(
+            "StorageService and API must share the same InMemoryBus"
+        )
+
+    if storage is not None and database_instance is None:
+        current_database = storage.database
+    else:
+        current_database = (
+            database_instance
+            if database_instance is not None
+            else database
+        )
+
+    if storage is not None and storage.database is not current_database:
+        raise ValueError(
+            "StorageService and API must share the same Database"
+        )
 
     current_deadband = (
         deadband_instance
         if deadband_instance is not None
         else deadband
-    )
-
-    current_database = (
-        database_instance
-        if database_instance is not None
-        else database
     )
 
     current_storage = (
@@ -110,36 +137,110 @@ def create_app(
         )
     )
 
+
     current_commands = (
         commands
         if commands is not None
-        else command_service
+        else PLCCommandService(
+            host=plc_host,
+            port=plc_port,
+        )
     )
+    current_poller = None
+
+    if enable_polling:
+        current_poller = (
+            polling_engine
+            if polling_engine is not None
+            else PollingEngine(
+                host=plc_host,
+                port=plc_port,
+                interval=poll_interval,
+                bus=current_bus,
+            )
+        )
+
+        if current_poller.bus is not current_bus:
+            raise ValueError(
+                "PollingEngine and API must share the same InMemoryBus"
+            )
 
     @asynccontextmanager
     async def lifespan(
         _: FastAPI,
     ) -> AsyncIterator[None]:
 
-        await current_storage.database.connect()
-
-        # Если у тебя StorageService / Data Acquisition имеют фоновые задачи
-        # и они должны запускаться вместе с API, добавь их запуск и остановку
-        # сюда. Например:
-        #
-        # task = asyncio.create_task(current_storage.start())
-        # try:
-        #     yield
-        # finally:
-        #     task.cancel()
-        #     await asyncio.gather(task, return_exceptions=True)
-        #     await current_storage.database.close()
+        storage_task: asyncio.Task | None = None
+        polling_task: asyncio.Task | None = None
+        db_connected = False
 
         try:
+            # 1. Подключаем БД.
+            await current_database.connect()
+            db_connected = True
+
+            # 2. Запускаем архивный обработчик.
+            storage_task = asyncio.create_task(
+                current_storage.run(),
+                name="scada-storage",
+            )
+
+            # Даём обработчику подписаться на шину.
+            await asyncio.sleep(0)
+
+            if storage_task.done():
+                await storage_task
+
+            # 3. Запускаем опросчик на той же шине.
+            if current_poller is not None:
+                polling_task = asyncio.create_task(
+                    current_poller.run(),
+                    name="scada-polling",
+                )
+
+            # Приложение готово к работе.
             yield
 
         finally:
-            await current_storage.database.close()
+            # 4. Прекращаем новые публикации.
+            if current_poller is not None:
+                current_poller.stop()
+
+            # 5. Завершаем опросчик.
+            if polling_task is not None:
+                polling_task.cancel()
+
+                await asyncio.gather(
+                    polling_task,
+                    return_exceptions=True,
+                )
+
+            try:
+                # 6. Дожидаемся обработки очереди архива.
+                if (
+                    storage_task is not None
+                    and not storage_task.done()
+                ):
+                    await current_storage.drain()
+
+            except Exception:
+                logger.exception(
+                    "Failed to drain storage queue"
+                )
+
+            finally:
+                # 7. Завершаем архивный обработчик.
+                if storage_task is not None:
+                    storage_task.cancel()
+
+                    await asyncio.gather(
+                        storage_task,
+                        return_exceptions=True,
+                    )
+
+                # 8. Закрываем БД последней.
+                if db_connected:
+                    await current_database.close()
 
     api = FastAPI(
         title="Mini SCADA API",

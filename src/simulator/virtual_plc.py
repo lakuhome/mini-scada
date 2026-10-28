@@ -159,9 +159,17 @@ class VirtualPLC:
         except Exception as e:
             logger.error(f"Error handling client {addr}: {e}")
         finally:
-            logger.info(f"Connection closed for {addr}")
+            logger.info("Connection closed for %s", addr)
             writer.close()
-            await writer.wait_closed()
+
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                logger.debug(
+                    "Connection already closed for %s: %s",
+                    addr,
+                    exc,
+                )
 
     async def run(self):
         """Запуск сервера и физического движка"""
