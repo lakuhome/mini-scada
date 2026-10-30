@@ -21,6 +21,10 @@ DEFAULT_TAG_MAP = {
 }
 
 
+class ModbusResponseError(ValueError):
+    """The controller returned an invalid FC03 response."""
+
+
 class PollingEngine:
     def __init__(
         self,
@@ -29,12 +33,20 @@ class PollingEngine:
         interval: float = 1.0,
         bus: InMemoryBus | None = None,
         tag_map: dict[int, str] | None = None,
+        timeout: float = 3.0,
+        retry_interval: float = 3.0,
     ):
         self.host = host
         self.port = port
         self.interval = interval
         self.bus = bus if bus is not None else InMemoryBus()
         self.tag_map = tag_map if tag_map is not None else DEFAULT_TAG_MAP
+        if timeout <= 0 or retry_interval < 0:
+            raise ValueError("timeout must be positive and retry_interval non-negative")
+        if not self.tag_map or any(not isinstance(address, int) or not 0 <= address < 125 for address in self.tag_map):
+            raise ValueError("tag_map must contain register addresses between 0 and 124")
+        self.timeout = timeout
+        self.retry_interval = retry_interval
         self._running = False
         self.transaction_id = 1
 
@@ -61,52 +73,31 @@ class PollingEngine:
         """
         Формирует запрос (FC 03), отправляет его и читает ответ.
         """
-        start_address = 0
-        register_count = max(len(self.tag_map), 5)
-        
-        length = 6
-        unit_id = 1
-        function_code = 3
-        
-        request_bytes = struct.pack(
-            '>HHHBBHH', 
-            self.transaction_id, 0, length, unit_id, 
-            function_code, start_address, register_count
-        )
-        
-        writer.write(request_bytes)
-        await writer.drain()
-        logger.debug(f"Sent request TX: {self.transaction_id} for {register_count} registers.")
+        register_count = max(max(self.tag_map) + 1, 5)
+        request = struct.pack(">HHHBBHH", self.transaction_id, 0, 6, 1, 3, 0, register_count)
+        writer.write(request)
+        # One deadline covers both the write and the complete response.
+        async with asyncio.timeout(self.timeout):
+            await writer.drain()
+            header = await reader.readexactly(7)
+            tx_id, protocol_id, length, unit_id = struct.unpack(">HHHB", header)
+            if tx_id != self.transaction_id or protocol_id != 0 or unit_id != 1:
+                raise ModbusResponseError("Invalid Modbus transaction, protocol or unit ID")
+            if not 3 <= length <= 253:
+                raise ModbusResponseError("Invalid Modbus response length")
+            pdu = await reader.readexactly(length - 1)
 
-        mbap_bytes = await reader.readexactly(7)
-        tx_id, proto_id, resp_len, resp_unit_id = struct.unpack('>HHHB', mbap_bytes)
-
-        pdu_bytes = await reader.readexactly(resp_len - 1)
-        resp_fc = pdu_bytes[0]
-        byte_count = pdu_bytes[1]
-        
-        if resp_fc == 3:
-            values_count = byte_count // 2
-            data_format = f'>{values_count}H'
-            
-            values = struct.unpack(data_format, pdu_bytes[2:])
-            logger.info(f"Received values from PLC: {values}")
-
-            # Обновляем теги в In-Memory Bus
-            for reg_idx, tag_id in self.tag_map.items():
-                if reg_idx < len(values):
-                    raw_val = values[reg_idx]
-                    tag = self.bus.get(tag_id)
-                    if tag is None:
-                        tag = Tag(id=tag_id)
-                    tag.update_value(raw_val)
-                    self.bus.publish(tag)
-                    logger.debug(f"Updated Tag {tag.id} = {tag.value} [{tag.quality}]")
-
-            return values
-        else:
-            logger.warning(f"Unexpected Function Code: {resp_fc}")
-            return None
+        if pdu[0] != 3:
+            raise ModbusResponseError(f"Unexpected Modbus function 0x{pdu[0]:02x}")
+        expected_bytes = register_count * 2
+        if length != expected_bytes + 3 or pdu[1] != expected_bytes or len(pdu) != expected_bytes + 2:
+            raise ModbusResponseError("Invalid FC03 register count or payload length")
+        values = struct.unpack(f">{register_count}H", pdu[2:])
+        for address, tag_id in self.tag_map.items():
+            tag = self.bus.get(tag_id) or Tag(id=tag_id)
+            tag.update_value(values[address])
+            self.bus.publish(tag)
+        return values
 
     def stop(self):
         """Остановка цикла опроса."""
@@ -114,30 +105,34 @@ class PollingEngine:
 
     async def run(self):
         self._running = True
-        logger.info(f"Starting Polling Engine targeting {self.host}:{self.port} (interval={self.interval}s)")
-        
+        logger.info("Starting Polling Engine targeting %s:%s", self.host, self.port)
         while self._running:
+            writer = None
+            failed = False
             try:
-                reader, writer = await asyncio.open_connection(self.host, self.port)
-                logger.info(f"Connected to PLC at {self.host}:{self.port} successfully.")
-                
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port), self.timeout
+                )
+                logger.info("Connected to PLC at %s:%s", self.host, self.port)
                 while self._running:
                     await self._read_registers(writer, reader)
-                    
-                    self.transaction_id = (self.transaction_id + 1) % 65535
+                    self.transaction_id = (self.transaction_id + 1) % 65536
                     await asyncio.sleep(self.interval)
-                    
-            except (ConnectionRefusedError, asyncio.TimeoutError, asyncio.IncompleteReadError) as e:
-                logger.error(f"Connection lost or refused ({type(e).__name__}). Retrying in 3 seconds...")
-                self._mark_all_tags_bad()
-                await asyncio.sleep(3)
             except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+                raise
+            except Exception:
+                failed = True
+                logger.exception("PLC polling failed; retrying in %s seconds", self.retry_interval)
                 self._mark_all_tags_bad()
-                await asyncio.sleep(3)
-
+            finally:
+                if writer is not None:
+                    writer.close()
+                    try:
+                        await asyncio.wait_for(writer.wait_closed(), self.timeout)
+                    except (OSError, asyncio.TimeoutError):
+                        logger.debug("Error closing PLC connection", exc_info=True)
+            if failed and self._running:
+                await asyncio.sleep(self.retry_interval)
         logger.info("Polling Engine stopped.")
 
 

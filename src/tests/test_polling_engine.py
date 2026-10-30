@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.core.bus import InMemoryBus
 from src.core.models import Tag
-from src.da.polling_engine import PollingEngine, DEFAULT_TAG_MAP
+from src.da.polling_engine import PollingEngine, DEFAULT_TAG_MAP, ModbusResponseError
 
 
 def test_pe_01_initialization_defaults():
@@ -94,8 +94,8 @@ async def test_pe_04_read_registers_unexpected_function_code():
     pdu = struct.pack('>BB', 0x83, 0x02)
     mock_reader.readexactly = AsyncMock(side_effect=[mbap, pdu])
 
-    values = await engine._read_registers(mock_writer, mock_reader)
-    assert values is None
+    with pytest.raises(ModbusResponseError):
+        await engine._read_registers(mock_writer, mock_reader)
 
 
 def test_pe_05_custom_tag_map():
@@ -126,8 +126,8 @@ async def test_pe_07_request_packing_matches_protocol():
     mock_reader = AsyncMock()
 
     # Подсовываем пустой ответ для завершения функции
-    mbap = struct.pack('>HHHB', 1, 0, 5, 1)
-    pdu = struct.pack('>BBH', 3, 2, 999)
+    mbap = struct.pack('>HHHB', 1, 0, 13, 1)
+    pdu = struct.pack('>BB5H', 3, 10, 999, 0, 0, 0, 0)
     mock_reader.readexactly = AsyncMock(side_effect=[mbap, pdu])
 
     await engine._read_registers(mock_writer, mock_reader)
@@ -187,3 +187,84 @@ def test_pe_10_tag_quality_transition():
     assert tag.quality == "BAD"
     # Значение сохраняется в памяти как последнее известное
     assert tag.value == 15.4
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header,pdu", [
+    (struct.pack(">HHHB", 2, 0, 13, 1), b""),
+    (struct.pack(">HHHB", 1, 1, 13, 1), b""),
+    (struct.pack(">HHHB", 1, 0, 13, 2), b""),
+    (struct.pack(">HHHB", 1, 0, 254, 1), b""),
+    (struct.pack(">HHHB", 1, 0, 13, 1), struct.pack(">BB5H", 3, 8, 1, 2, 3, 4, 5)),
+    (struct.pack(">HHHB", 1, 0, 5, 1), struct.pack(">BBH", 3, 2, 1)),
+])
+async def test_invalid_response_never_updates_tags(header, pdu):
+    engine = PollingEngine()
+    reader = AsyncMock()
+    reader.readexactly.side_effect = [header, pdu]
+    writer = MagicMock()
+    writer.drain = AsyncMock()
+    with pytest.raises(ModbusResponseError):
+        await engine._read_registers(writer, reader)
+    assert all(tag.quality == "BAD" for tag in engine.bus.get_all().values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["silence", "bad_header", "truncated"])
+async def test_failure_marks_bad_then_reconnects_and_recovers(failure):
+    connections = 0
+    closed = asyncio.Event()
+    handlers = set()
+
+    async def handle(reader, writer):
+        nonlocal connections
+        task = asyncio.current_task()
+        handlers.add(task)
+        connections += 1
+        number = connections
+        try:
+            while True:
+                request = await reader.readexactly(12)
+                if number == 1:
+                    if failure == "bad_header":
+                        writer.write(struct.pack(">HHHB", 99, 0, 13, 1))
+                        await writer.drain()
+                    elif failure == "truncated":
+                        writer.write(struct.pack(">HHHB", 1, 0, 13, 1) + b"\x03\x0a")
+                        await writer.drain()
+                    await reader.read()
+                    closed.set()
+                    return
+                tx = struct.unpack(">H", request[:2])[0]
+                writer.write(struct.pack(">HHHBBB5H", tx, 0, 13, 1, 3, 10, 750, 210, 1, 0, 800))
+                await writer.drain()
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            handlers.discard(task)
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    bus = InMemoryBus()
+    engine = PollingEngine(port=server.sockets[0].getsockname()[1], bus=bus,
+                           timeout=0.1, retry_interval=0.01, interval=0.1)
+    bus.publish(Tag(id="Boiler_Temp_01", value=700, quality="GOOD"))
+    events = bus.subscribe(replay_current=False)
+    task = asyncio.create_task(engine.run())
+    try:
+        async with asyncio.timeout(3):
+            states = []
+            while states != ["BAD", "GOOD"]:
+                tag = await events.get()
+                if tag.id == "Boiler_Temp_01":
+                    states.append(tag.quality)
+            await closed.wait()
+        assert bus.get("Boiler_Temp_01").value == 750
+        assert connections >= 2
+    finally:
+        engine.stop()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*handlers, return_exceptions=True)
