@@ -44,6 +44,7 @@ class InMemoryBus:
 
         return queue
 
+    def unsubscribe(self, queue: asyncio.Queue[Tag]) -> None:
+        self._subscribers.discard(queue)
 
-def unsubscribe(self, queue: asyncio.Queue[Tag]) -> None:
-    self._subscribers.discard(queue)
+
