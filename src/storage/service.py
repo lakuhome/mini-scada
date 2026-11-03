@@ -60,10 +60,14 @@ class StorageService:
         self,
         tag_id: str,
         limit: int = 100,
+        start: float | None = None,
+        end: float | None = None,
     ) -> list[Tag]:
         return await self.database.get_history(
             tag_id=tag_id,
             limit=limit,
+            start=start,
+            end=end,
         )
 
     async def drain(self) -> None:
