@@ -323,6 +323,13 @@ def create_app(
         response_model=HistoryResponse,
         tags=["history"],
     )
+
+    @api.get(
+        "/api/tags/{tag_id}/history",
+        response_model=HistoryResponse,
+        tags=["history"],
+    )
+    
     async def get_tag_history(
         tag_id: str,
         limit: int = Query(
@@ -331,11 +338,27 @@ def create_app(
             le=1000,
             description="Maximum number of records",
         ),
+        start: float | None = Query(
+            default=None,
+            description="Unix timestamp, inclusive lower bound",
+        ),
+        end: float | None = Query(
+            default=None,
+            description="Unix timestamp, inclusive upper bound",
+        ),
     ) -> HistoryResponse:
+
+        if start is not None and end is not None and start > end:
+            raise HTTPException(
+                status_code=422,
+                detail="'start' must be less than or equal to 'end'",
+            )
 
         history = await current_storage.get_history(
             tag_id=tag_id,
             limit=limit,
+            start=start,
+            end=end,
         )
 
         history = history or []
