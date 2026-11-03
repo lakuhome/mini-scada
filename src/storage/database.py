@@ -4,8 +4,10 @@ import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Any
+import math
 
 from src.core.models import Tag
+from src.core.models import Quality, Tag
 
 
 class Database:
@@ -62,6 +64,34 @@ class Database:
         return self._connection
 
     async def save_tag(self, tag: Tag) -> None:
+        """
+        Сохраняет тег в историю.
+
+        Защита от NaN/Infinity: SQLite хранит REAL и молча принимает NaN,
+        но JSON-сериализация (FastAPI) на таком значении упадёт с
+        "Out of range float values are not JSON compliant".
+        Поэтому битовое значение помечаем quality=BAD — «мусор» в истории
+        честно отмечен как недостоверный.
+
+        Колонка value — NOT NULL (схема уже в проде), поэтому вместо NULL
+        пишем 0.0: любое приложение, читающее историю, обязано смотреть
+        сначала на quality, и только потом брать value.
+        """
+        value: float
+        quality = tag.quality
+
+        try:
+            value = float(tag.value)
+
+        except (TypeError, ValueError):
+            value = 0.0
+            quality = Quality.BAD
+
+        else:
+            if math.isnan(value) or math.isinf(value):
+                value = 0.0
+                quality = Quality.BAD
+
         connection = await self._get_connection()
         async with self._lock:
             await asyncio.to_thread(
@@ -71,24 +101,44 @@ class Database:
                     (tag_id, value, timestamp, quality)
                 VALUES (?, ?, ?, ?)
                 """,
-                (tag.id, float(tag.value), tag.timestamp, tag.quality),
+                (tag.id, value, tag.timestamp, str(quality.value)),
             )
             await asyncio.to_thread(connection.commit)
 
-    async def get_history(self, tag_id: str, limit: int = 100) -> list[Tag]:
+    async def get_history(
+        self,
+        tag_id: str,
+        limit: int = 100,
+        start: float | None = None,
+        end: float | None = None,
+    ) -> list[Tag]:
+        """
+        Читает историю тега.
+
+        Args:
+            start: нижняя граница времени (unix, включительно).
+            end: верхняя граница времени (unix, включительно).
+        """
         if limit <= 0:
             return []
 
         connection = await self._get_connection()
         async with self._lock:
-            rows = await asyncio.to_thread(self._fetch_history, connection, tag_id, limit)
+            rows = await asyncio.to_thread(
+                self._fetch_history,
+                connection,
+                tag_id,
+                limit,
+                start,
+                end,
+            )
 
         return [
             Tag(
                 id=row[0],
                 value=row[1],
                 timestamp=row[2],
-                quality=row[3],
+                quality=Quality.parse(row[3]),
             )
             for row in rows
         ]
@@ -98,17 +148,33 @@ class Database:
         connection: sqlite3.Connection,
         tag_id: str,
         limit: int,
+        start: float | None = None,
+        end: float | None = None,
     ) -> list[tuple[Any, ...]]:
-        cursor = connection.execute(
-            """
+        query = """
             SELECT tag_id, value, timestamp, quality
             FROM tag_history
             WHERE tag_id = ?
+        """
+        params: list[Any] = [tag_id]
+
+        # Динамические условия — только из заранее известных констант,
+        # значения всегда через placeholders (SQL injection невозможен).
+        if start is not None:
+            query += " AND timestamp >= ?"
+            params.append(start)
+
+        if end is not None:
+            query += " AND timestamp <= ?"
+            params.append(end)
+
+        query += """
             ORDER BY timestamp DESC, id DESC
             LIMIT ?
-            """,
-            (tag_id, limit),
-        )
+        """
+        params.append(limit)
+
+        cursor = connection.execute(query, params)
         try:
             return cursor.fetchall()
         finally:
