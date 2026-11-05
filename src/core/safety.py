@@ -97,6 +97,9 @@ class SafetyLimits:
                 f"safety range [{limit.min_value}, {limit.max_value}]"
             )
 
+    def get_limit(self, register: int) -> RegisterLimit | None:
+        return self._limits.get(register)
+
     def validate_many(
         self,
         pairs: Iterable[tuple[int, int]],

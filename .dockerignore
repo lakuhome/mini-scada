@@ -1,0 +1,11 @@
+.git
+venv
+.venv
+**/node_modules
+frontend/dist
+**/__pycache__
+.pytest_cache
+.ruff_cache
+*.db*
+*.png
+.coverage*

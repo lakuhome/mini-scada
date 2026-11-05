@@ -11,12 +11,18 @@ logging.basicConfig(
 logger = logging.getLogger("VirtualPLC")
 
 class VirtualPLC:
-    def __init__(self, host: str = "127.0.0.1", port: int = 5020):
+    def __init__(self, host: str = "127.0.0.1", port: int = 5020,
+                 response_delay: float = 0, disconnect_every: int = 0):
+        if response_delay < 0 or disconnect_every < 0:
+            raise ValueError("Fault parameters must be non-negative")
         self.host = host
         self.port = port
-        self.registers = [0] * 100 
+        self.registers = [0] * 100
         self._running = False
         self._server = None
+        self.response_delay = response_delay
+        self.disconnect_every = disconnect_every
+        self._clients = set()
 
         # Начальные значения технологических параметров:
         # Регистр 0: Температура котла (масштаб x10, 750 = 75.0 °C)
@@ -35,23 +41,26 @@ class VirtualPLC:
         self._running = False
         if self._server:
             self._server.close()
+        for writer in tuple(self._clients):
+            writer.close()
+
+    def _step_physics(self, step: int):
+        target = self.registers[4]
+        delta = target - self.registers[0]
+        if delta:
+            self.registers[0] += (1 if delta > 0 else -1) * max(1, round(abs(delta) * 0.15))
+        self.registers[1] = 210 + int(5 * math.cos(step * 0.08))
 
     async def _simulate_physics(self):
         """
         Изолированный цикл имитации физического процесса.
-        Моделирует небольшие колебания температуры вокруг уставки.
+        Моделирует приближение температуры к уставке и колебания давления.
         """
         logger.info("Physics engine started...")
         step = 0
         while self._running:
             step += 1
-            # Плавные синусоидальные микроколебания температуры (+/- 1.5 °C)
-            fluctuation = int(15 * math.sin(step * 0.1))
-            self.registers[0] = 750 + fluctuation
-
-            # Небольшие флуктуации давления (+/- 0.05 бар)
-            press_fluct = int(5 * math.cos(step * 0.08))
-            self.registers[1] = 210 + press_fluct
+            self._step_physics(step)
 
             await asyncio.sleep(1.0)
 
@@ -61,6 +70,8 @@ class VirtualPLC:
         """
         addr = writer.get_extra_info('peername')
         logger.info(f"Connection established from {addr}")
+        self._clients.add(writer)
+        requests = 0
 
         try:
             while self._running:
@@ -70,11 +81,13 @@ class VirtualPLC:
                     break
 
                 transaction_id, protocol_id, length, unit_id = struct.unpack('>HHHB', mbap_bytes)
-                
+                if protocol_id != 0 or not 2 <= length <= 254:
+                    break
+
                 logger.debug(f"MBAP Header -> TX: {transaction_id}, Proto: {protocol_id}, Len: {length}, Unit: {unit_id}")
 
                 pdu_length = length - 1
-                
+
                 if pdu_length > 0:
                     pdu_bytes = await reader.readexactly(pdu_length)
                 else:
@@ -82,7 +95,12 @@ class VirtualPLC:
                     continue
 
                 function_code = pdu_bytes[0]
-                
+                requests += 1
+                if self.disconnect_every and requests % self.disconnect_every == 0:
+                    break
+                if self.response_delay:
+                    await asyncio.sleep(self.response_delay)
+
                 logger.info(f"Received Function Code: {function_code}")
 
                 if function_code == 3:
@@ -94,17 +112,17 @@ class VirtualPLC:
                         continue
 
                     requested_values = self.registers[start_address : start_address + register_count]
-                    
+
                     data_format = f'>{register_count}H'
                     packed_data = struct.pack(data_format, *requested_values)
- 
+
                     byte_count = register_count * 2
                     response_length = 1 + 1 + 1 + byte_count
-                    
+
                     header_format = '>HHHBBB'
                     header_bytes = struct.pack(
                         header_format,
-                        transaction_id, 
+                        transaction_id,
                         protocol_id,
                         response_length,
                         unit_id,
@@ -113,10 +131,10 @@ class VirtualPLC:
                     )
 
                     full_response = header_bytes + packed_data
-                    
+
                     writer.write(full_response)
                     await writer.drain()
-                    
+
                     logger.info(f"Successfully replied with {register_count} registers. Total bytes sent: {len(full_response)}")
 
                 elif function_code == 6:
@@ -130,27 +148,27 @@ class VirtualPLC:
                     self.registers[start_address] = write_value
                     logger.info(f"Register {start_address} successfully updated to {write_value}")
 
-                    response_length = 6 
-                    
+                    response_length = 6
+
                     header_format = '>HHHBB'
                     header_bytes = struct.pack(
                         header_format,
-                        transaction_id, 
+                        transaction_id,
                         protocol_id,
                         response_length,
                         unit_id,
                         function_code
                     )
-                    
+
                     data_bytes = struct.pack('>HH', start_address, write_value)
-                    
+
                     full_response = header_bytes + data_bytes
-                    
+
                     writer.write(full_response)
                     await writer.drain()
-                    
+
                     logger.info(f"Successfully replied to write command. Total bytes sent: {len(full_response)}")
-                    
+
                 else:
                     logger.warning(f"Unsupported function code: {function_code}")
 
@@ -159,6 +177,7 @@ class VirtualPLC:
         except Exception as e:
             logger.error(f"Error handling client {addr}: {e}")
         finally:
+            self._clients.discard(writer)
             logger.info("Connection closed for %s", addr)
             writer.close()
 
@@ -177,7 +196,8 @@ class VirtualPLC:
         server = await asyncio.start_server(
             self._handle_client, self.host, self.port
         )
-        
+        self._server = server
+
         addr = server.sockets[0].getsockname()
         logger.info(f"Virtual PLC listening on {addr}")
 
@@ -206,6 +226,8 @@ if __name__ == "__main__":
         default=5020,
         help="PLC Modbus TCP port",
     )
+    parser.add_argument("--response-delay", type=float, default=0, help="Delay each response, seconds")
+    parser.add_argument("--disconnect-every", type=int, default=0, help="Drop every Nth request per connection (0 disables)")
 
     args = parser.parse_args()
 
@@ -217,6 +239,8 @@ if __name__ == "__main__":
     plc = VirtualPLC(
         host=args.host,
         port=args.port,
+        response_delay=args.response_delay,
+        disconnect_every=args.disconnect_every,
     )
 
     try:

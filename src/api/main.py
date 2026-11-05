@@ -3,10 +3,16 @@ import asyncio
 import os
 import logging
 import math
-from contextlib import asynccontextmanager
+import json
+import time
+from decimal import Decimal
+from pathlib import Path
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from src.core.catalog import TAG_CATALOG
 from src.da.polling_engine import PollingEngine
 
 
@@ -21,6 +27,7 @@ from src.api.schemas import (
     TagResponse,
     TagsResponse,
     WriteRegisterRequest,
+    SetpointRequest,
 )
 
 from src.core.bus import InMemoryBus
@@ -46,7 +53,7 @@ POLL_INTERVAL = float(
 )
 
 DEFAULT_SAFETY_LIMITS = SafetyLimits.from_mapping(
-    {},
+    {int(key): tuple(value) for key, value in json.loads(os.getenv("SCADA_SAFETY_LIMITS", "{}")).items()},
     allow_unknown=False,
 )
 
@@ -98,6 +105,7 @@ def create_app(
     plc_port: int = PLC_PORT,
     poll_interval: float = POLL_INTERVAL,
     safety_limits_instance: SafetyLimits | None = None,
+    web_dir: str | Path | None = None,
 ) -> FastAPI:
 
     if storage is not None and bus_instance is None:
@@ -324,12 +332,6 @@ def create_app(
         tags=["history"],
     )
 
-    @api.get(
-        "/api/tags/{tag_id}/history",
-        response_model=HistoryResponse,
-        tags=["history"],
-    )
-    
     async def get_tag_history(
         tag_id: str,
         limit: int = Query(
@@ -348,6 +350,8 @@ def create_app(
         ),
     ) -> HistoryResponse:
 
+        if any(bound is not None and not math.isfinite(bound) for bound in (start, end)):
+            raise HTTPException(status_code=422, detail="Time bounds must be finite")
         if start is not None and end is not None and start > end:
             raise HTTPException(
                 status_code=422,
@@ -417,12 +421,71 @@ def create_app(
 
         return CommandResponse(
             status="ok",
+            acknowledged_at=time.time(),
             command="write_register",
             register_address=(
                 command.register_address
             ),
             value=command.value,
         )
+
+    @api.get("/api/catalog")
+    async def catalog():
+        result = {}
+        for tag_id, meta in TAG_CATALOG.items():
+            limit = current_safety_limits.get_limit(meta["register"])
+            result[tag_id] = {
+                **meta,
+                "writable": limit is not None,
+                "min": limit.min_value / meta["divisor"] if limit else None,
+                "max": limit.max_value / meta["divisor"] if limit else None,
+            }
+        return result
+
+    @api.post("/api/tags/{tag_id}/setpoint", response_model=CommandResponse)
+    async def setpoint(tag_id: str, command: SetpointRequest):
+        meta = TAG_CATALOG.get(tag_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Unknown tag")
+        raw = Decimal(str(command.value)) * meta["divisor"]
+        if raw != raw.to_integral_value() or not 0 <= raw <= 65535:
+            raise HTTPException(status_code=422, detail="Value cannot be represented by this register")
+        return await write_register(WriteRegisterRequest(register=meta["register"], value=int(raw)))
+
+    @api.websocket("/ws/tags")
+    async def telemetry(websocket: WebSocket):
+        await websocket.accept()
+
+        async def send_snapshots():
+            while True:
+                tags = [tag_to_response(tag).model_dump(mode="json")
+                        for tag in current_bus.get_all().values()]
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "snapshot", "server_time": time.time(), "tags": tags,
+                }), timeout=3.0)
+                await asyncio.sleep(0.5)
+
+        async def receive_disconnect():
+            while True:
+                await websocket.receive_text()
+
+        tasks = [asyncio.create_task(send_snapshots()), asyncio.create_task(receive_disconnect())]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        except (WebSocketDisconnect, OSError, asyncio.TimeoutError):
+            pass
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            with suppress(WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
+                await asyncio.wait_for(websocket.close(), timeout=1.0)
+
+    dist = Path(web_dir or os.getenv("SCADA_WEB_DIR", str(Path(__file__).resolve().parents[2] / "frontend" / "dist")))
+    if dist.is_dir():
+        api.mount("/", StaticFiles(directory=dist, html=True), name="web")
 
     return api
 

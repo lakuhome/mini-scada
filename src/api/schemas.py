@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 
 Quality = Literal["GOOD", "BAD"]
@@ -46,11 +46,16 @@ class WriteRegisterRequest(BaseModel):
     }
 
 
+class SetpointRequest(BaseModel):
+    value: FiniteFloat
+
+
 class CommandResponse(BaseModel):
     status: CommandStatus
     command: str
     register_address: int = Field(alias="register")
     value: int
+    acknowledged_at: float
 
     model_config = {
         "populate_by_name": True,
