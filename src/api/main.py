@@ -46,7 +46,9 @@ POLL_INTERVAL = float(
 )
 
 DEFAULT_SAFETY_LIMITS = SafetyLimits.from_mapping(
-    {},
+    {
+        4: (200, 900),
+    },
     allow_unknown=False,
 )
 
