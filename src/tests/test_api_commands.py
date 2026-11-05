@@ -62,6 +62,75 @@ def make_client(
     return TestClient(app), fake_commands
 
 
+def make_client_with_default_safety_limits(tmp_path):
+    """
+    Создаёт приложение без передачи собственной конфигурации
+    Safety Limits. Проверяем реальные настройки по умолчанию.
+    """
+    fake_commands = FakeCommandService()
+
+    app = create_app(
+        bus_instance=InMemoryBus(),
+        database_instance=Database(
+            str(tmp_path / "default-safety.db")
+        ),
+        deadband_instance=DeadbandFilter(threshold=0.0),
+        commands=fake_commands,  # type: ignore[arg-type]
+        enable_polling=False,
+    )
+
+    return TestClient(app), fake_commands
+
+
+class TestDefaultSafetyLimits:
+
+    def test_valid_setpoint_allowed(self, tmp_path):
+        client, fake = make_client_with_default_safety_limits(
+            tmp_path
+        )
+
+        with client:
+            response = client.post(
+                WRITE_URL,
+                json={
+                    "register": 4,
+                    "value": 800,
+                },
+            )
+
+        assert response.status_code == 200
+        assert fake.calls == [(4, 800)]
+
+    @pytest.mark.parametrize(
+        ("register", "value"),
+        [
+            (4, 199),
+            (4, 901),
+            (5, 800),
+        ],
+    )
+    def test_unsafe_commands_rejected(
+        self,
+        tmp_path,
+        register,
+        value,
+    ):
+        client, fake = make_client_with_default_safety_limits(
+            tmp_path
+        )
+
+        with client:
+            response = client.post(
+                WRITE_URL,
+                json={
+                    "register": register,
+                    "value": value,
+                },
+            )
+
+        assert response.status_code == 422
+        assert fake.calls == []
+        
 WRITE_URL = "/api/commands/write-register"
 
 
