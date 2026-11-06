@@ -24,7 +24,7 @@ function History({ catalog }) {
     return () => controller.abort();
   }, [selected, start, end, revision]);
   return <section className="panel history">
-    <div className="section-heading"><div><span className="eyebrow">АРХИВ</span><h2>История измерений</h2></div>
+    <div className="section-heading"><h2>Архив</h2>
       <button onClick={() => refresh(value => value + 1)}>Обновить</button></div>
     <div className="filters">
       <label>Показатель<select value={selected} onChange={e => setSelected(e.target.value)}>
@@ -33,11 +33,10 @@ function History({ catalog }) {
       <label>С <input type="datetime-local" value={start} onChange={e => setStart(e.target.value)} /></label>
       <label>По <input type="datetime-local" value={end} onChange={e => setEnd(e.target.value)} /></label>
     </div>
-    <p className="muted">Последние 100 записей выбранного периода, от новых к старым. В архив попадают значимые изменения и смена качества.</p>
     {result.error && <p role="alert" className="error">{result.error}</p>}
-    <div className="table-scroll"><table><thead><tr><th>Время</th><th>Значение, {catalog[selected]?.unit || 'ед.'}</th><th>Качество</th></tr></thead>
+    <div className="table-scroll"><table><thead><tr><th>Время</th><th>Значение{catalog[selected]?.unit ? `, ${catalog[selected].unit}` : ''}</th><th>Примечание</th></tr></thead>
       <tbody>{result.rows.map((tag, index) => <tr key={`${tag.timestamp}-${index}`}><td>{time(tag.timestamp)}</td>
-        <td>{displayValue(tag, catalog[selected])}</td><td><span className={`badge ${tag.quality === 'GOOD' ? 'good' : 'bad'}`}>{tag.quality}</span></td></tr>)}</tbody></table>
+        <td>{displayValue(tag, catalog[selected])}</td><td className={tag.quality === 'GOOD' ? 'muted' : 'unavailable'}>{tag.quality === 'GOOD' ? '—' : 'Нет данных'}</td></tr>)}</tbody></table>
       {result.loading ? <p className="empty">Загрузка архива…</p> : !result.rows.length && !result.error && <p className="empty">За выбранный период записей нет</p>}
     </div>
   </section>;
@@ -55,21 +54,21 @@ function Setpoint({ meta, tag, connected }) {
       // Incoming PLC telemetry completes a previously submitted command.
       // oxlint-disable-next-line react/set-state-in-effect
       setPending(null);
-      setMessage('Уставка подтверждена повторным чтением ПЛК.');
+      setMessage('Уставка применена.');
     }
   }, [tag, pending, connected]);
   useEffect(() => {
     if (!pending) return;
     const timer = setTimeout(() => {
       setPending(null);
-      setMessage('Подтверждение чтением не получено. Проверьте связь и текущую уставку.');
+      setMessage('Не удалось подтвердить изменение уставки.');
     }, 10000);
     return () => clearTimeout(timer);
   }, [pending]);
   async function submit(event) {
     event.preventDefault();
     setSending(true);
-    setMessage('Отправка команды…');
+    setMessage('Отправка…');
     const raw = Math.round(Number(value) * meta.divisor);
     try {
       const acknowledgement = await readJson(await fetch('/api/tags/Temp_Setpoint_01/setpoint', {
@@ -77,19 +76,19 @@ function Setpoint({ meta, tag, connected }) {
       }));
       if (mounted.current) {
         setPending({ raw, previousTimestamp: acknowledgement.acknowledged_at });
-        setMessage('Команда принята ПЛК. Ожидаем подтверждения чтением…');
+        setMessage('Ожидание подтверждения…');
       }
     } catch (error) { if (mounted.current) setMessage(`Ошибка: ${error.message}`); }
     finally { if (mounted.current) setSending(false); }
   }
-  return <section className="panel control"><span className="eyebrow">УПРАВЛЕНИЕ</span><h2>Температурная уставка</h2>
-    <p className="muted">Текущее значение</p><div className="setpoint-value">{displayValue(tag, meta, connected)} <small>°C</small></div>
+  return <section className="panel control"><h2>Температурная уставка</h2>
+    <div className="current-setpoint"><span>Задано</span><strong>{displayValue(tag, meta, connected)} <small>°C</small></strong></div>
     {meta?.writable ? <form onSubmit={submit}>
       <label>Новое значение, °C<input aria-label="Новая уставка" type="number" step={1 / meta.divisor} min={meta.min} max={meta.max}
         required value={value} onChange={e => setValue(e.target.value)} placeholder={`${meta.min}–${meta.max}`} /></label>
-      <p className="muted">Допустимо от {meta.min} до {meta.max} °C</p>
-      <button className="primary" disabled={!connected || tag?.quality !== 'GOOD' || sending || Boolean(pending)}>Применить уставку</button>
-    </form> : <p className="muted">Запись не разрешена конфигурацией сервера.</p>}
+      <p className="input-hint">{meta.min}–{meta.max} °C</p>
+      <button className="primary" disabled={!connected || tag?.quality !== 'GOOD' || sending || Boolean(pending)}>Применить</button>
+    </form> : <p className="muted">Изменение уставки недоступно.</p>}
     <p role="status" className="command-message">{message}</p>
   </section>;
 }
@@ -107,29 +106,26 @@ export default function App() {
   }, [retry]);
   const plcGood = connected && Object.keys(catalog).length > 0 && Object.keys(catalog).every(id => tags[id]?.quality === 'GOOD');
   return <div className="app">
-    <header className="topbar"><a className="brand" href="/">mini<span>scada</span><small>ОПЕРАТОРСКАЯ ПАНЕЛЬ</small></a>
-      <div className="connections"><span className={`badge ${connected ? 'good' : 'bad'}`}>Сервер: {connected ? 'на связи' : 'нет связи'}</span>
-        <span className={`badge ${plcGood ? 'good' : 'bad'}`}>ПЛК: {plcGood ? 'данные достоверны' : 'нет достоверных данных'}</span></div></header>
-    <main><div className="page-heading"><div><span className="eyebrow">ОБЪЕКТ 01 / ТЕПЛОСНАБЖЕНИЕ</span><h1>Котельная</h1><p className="muted">Мониторинг, управление и архив технологических параметров</p></div>
-      <div className="updated">Последний пакет<br /><strong>{receivedAt ? new Date(receivedAt).toLocaleTimeString('ru-RU') : 'Ожидание данных'}</strong></div></div>
-      {!connected && <p role="alert" className="notice">Нет связи с сервером. Значения недоступны, управление приостановлено. Переподключение выполняется автоматически.</p>}
-      {connected && !plcGood && <p role="alert" className="notice">Нет достоверных показаний ПЛК. Последние значения не считаются актуальными.</p>}
-      {catalogError && <p role="alert" className="notice">Не удалось загрузить описание тегов: {catalogError} <button onClick={() => setRetry(x => x + 1)}>Повторить</button></p>}
+    <main><header className="page-heading"><h1>Котельная</h1>
+      {connected && receivedAt && <span className="updated">Обновлено {new Date(receivedAt).toLocaleTimeString('ru-RU')}</span>}</header>
+      {!connected && <p role="alert" className="notice">Нет связи с сервером.</p>}
+      {connected && !plcGood && Object.keys(catalog).length > 0 && <p role="alert" className="notice">{Object.values(tags).some(tag => tag.quality === 'GOOD') ? 'Часть показаний недоступна.' : 'Показания контроллера недоступны.'}</p>}
+      {catalogError && <p role="alert" className="notice">Не удалось загрузить параметры. <button onClick={() => setRetry(x => x + 1)}>Повторить</button></p>}
       <div className="workspace"><div className="readings">
         {Object.entries(catalog).filter(([id]) => id !== 'Temp_Setpoint_01').map(([id, meta]) => {
           const tag = tags[id];
           const good = connected && tag?.quality === 'GOOD';
           const value = id === 'Pump_01_Status' && good ? (tag.value ? 'Работает' : 'Остановлен') :
-            id === 'Alarm_Code_01' && good && tag.value === 0 ? 'Нет аварий' : displayValue(tag, meta, connected);
+            id === 'Alarm_Code_01' && good ? (tag.value === 0 ? 'Нет аварий' : `Код ${tag.value}`) : displayValue(tag, meta, connected);
           const alarm = good && id === 'Alarm_Code_01' && tag.value !== 0;
-          return <article className={`panel reading ${!good || alarm ? 'attention' : ''}`} key={id}>
-            <div className="reading-title"><h2>{meta.title}</h2><span className={`dot ${good && !alarm ? 'good' : 'bad'}`} /></div>
+          return <article className={`panel reading ${alarm ? 'alarm' : ''}`} key={id}>
+            <h2>{id === 'Alarm_Code_01' ? 'Аварии' : meta.title}</h2>
             <div className="reading-value" data-testid={id}>{value}<small>{meta.unit}</small></div>
-            <div className="reading-footer"><span>{good ? (alarm ? 'Авария' : 'GOOD') : connected ? 'BAD' : 'Нет связи'}</span><time>{time(tag?.timestamp)}</time></div>
+            {!good && <span className="unavailable">Нет данных</span>}
           </article>;
         })}
       </div><Setpoint meta={catalog.Temp_Setpoint_01} tag={tags.Temp_Setpoint_01} connected={connected} /></div>
       <History catalog={catalog} />
-    </main><footer>mini-scada · Учебный стенд котельной <span>Modbus TCP / SQLite</span></footer>
+    </main>
   </div>;
 }
