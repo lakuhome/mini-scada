@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import pytest
@@ -13,13 +12,7 @@ from src.storage.database import Database
 
 
 class FakeCommandService:
-    """
-    Заглушка Modbus-клиента.
-
-    Мы НЕ тестируем сам Modbus-протокол (это зона Студента 1 и
-    test_modbus.py). Мы тестируем слой принятия решений: ДОШЛА ли
-    команда до клиента или Safety Limits отбила её раньше.
-    """
+    """Заглушка Modbus-клиента для проверки REST API и Safety Limits."""
 
     def __init__(self, fail_with: Exception | None = None) -> None:
         self.calls: list[tuple[int, int]] = []
@@ -38,11 +31,11 @@ def make_client(
     commands: FakeCommandService | None = None,
     safety_limits: SafetyLimits | None = None,
 ) -> tuple[TestClient, FakeCommandService]:
-    """
-    Собирает изолированное приложение:
-      * enable_polling=False — чтобы тесты не пытались соединиться с PLC;
-      * своя БД в tmp_path — тесты не мешают друг другу;
-      * injected FakeCommandService — наблюдаем, что дошло до «PLC».
+    """Создаёт изолированное приложение для API-тестов.
+
+    Если safety_limits не переданы, create_app использует настоящую
+    DEFAULT_SAFETY_LIMITS из src/api/main.py. Это важно: тестируем
+    конфигурацию приложения, а не отдельную тестовую политику.
     """
     fake_commands = commands or FakeCommandService()
 
@@ -51,51 +44,26 @@ def make_client(
         database_instance=Database(str(tmp_path / "test.db")),
         deadband_instance=DeadbandFilter(threshold=0.0),
         commands=fake_commands,  # type: ignore[arg-type]
-        safety_limits_instance=safety_limits
-        or SafetyLimits.from_mapping(
-            {40001: (20, 90)},
-            allow_unknown=False,
-        ),
+        safety_limits_instance=safety_limits,
         enable_polling=False,
     )
 
     return TestClient(app), fake_commands
 
 
-def make_client_with_default_safety_limits(tmp_path):
-    """
-    Создаёт приложение без передачи собственной конфигурации
-    Safety Limits. Проверяем реальные настройки по умолчанию.
-    """
-    fake_commands = FakeCommandService()
-
-    app = create_app(
-        bus_instance=InMemoryBus(),
-        database_instance=Database(
-            str(tmp_path / "default-safety.db")
-        ),
-        deadband_instance=DeadbandFilter(threshold=0.0),
-        commands=fake_commands,  # type: ignore[arg-type]
-        enable_polling=False,
-    )
-
-    return TestClient(app), fake_commands
+WRITE_URL = "/api/commands/write-register"
 
 
 class TestDefaultSafetyLimits:
+    """Проверяем именно конфигурацию Safety Limits по умолчанию."""
 
     def test_valid_setpoint_allowed(self, tmp_path):
-        client, fake = make_client_with_default_safety_limits(
-            tmp_path
-        )
+        client, fake = make_client(tmp_path)
 
         with client:
             response = client.post(
                 WRITE_URL,
-                json={
-                    "register": 4,
-                    "value": 800,
-                },
+                json={"register": 4, "value": 800},
             )
 
         assert response.status_code == 200
@@ -112,128 +80,104 @@ class TestDefaultSafetyLimits:
     def test_unsafe_commands_rejected(
         self,
         tmp_path,
-        register,
-        value,
+        register: int,
+        value: int,
     ):
-        client, fake = make_client_with_default_safety_limits(
-            tmp_path
-        )
+        client, fake = make_client(tmp_path)
 
         with client:
             response = client.post(
                 WRITE_URL,
-                json={
-                    "register": register,
-                    "value": value,
-                },
+                json={"register": register, "value": value},
             )
 
         assert response.status_code == 422
         assert fake.calls == []
-        
-WRITE_URL = "/api/commands/write-register"
-
-
-# ---------------------------------------------------------------------------
-# 1. Главный safety-контракт: опасные значения не доходят до PLC
-# ---------------------------------------------------------------------------
 
 
 class TestSafetyBlocksWrites:
     def test_value_above_limit_rejected_and_not_sent_to_plc(self, tmp_path):
-        """
-        Уставка 150 при лимите [20..90].
-        Проверяем ДВА факта:
-          * HTTP 422 — оператор получил понятный отказ;
-          * fake.calls == [] — команда физически не ушла в PLC.
-        Второй факт важнее первого: именно он означает «железо в безопасности».
-        """
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 150})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 901},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
 
     def test_value_below_limit_rejected_and_not_sent_to_plc(self, tmp_path):
-        """Ниже минимума — тоже опасно (например, остановка насоса)."""
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 10})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 199},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
 
     def test_unknown_register_blocked_in_whitelist_mode(self, tmp_path):
-        """
-        allow_unknown=False: попытка писать в регистр 40002,
-        которого нет в whitelist -> отказ, PLC не тронут.
-        """
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40002, "value": 50})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 5, "value": 500},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
 
     def test_rejection_detail_explains_reason(self, tmp_path):
-        """
-        В ответе должна быть причина (регистр, диапазон),
-        а не абстрактное «error» — так фронтенд/оператор поймёт,
-        какую уставку можно задать.
-        """
         client, _ = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 150})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 901},
+        )
 
+        assert response.status_code == 422
         detail = response.json()["detail"]
-        assert "40001" in detail
-        assert "20" in detail and "90" in detail
-
-
-# ---------------------------------------------------------------------------
-# 2. Валидные команды проходят сквозь все проверки
-# ---------------------------------------------------------------------------
+        assert "4" in detail
+        assert "200" in detail
+        assert "900" in detail
 
 
 class TestValidCommands:
     def test_valid_command_returns_200_and_reaches_plc(self, tmp_path):
-        """75 ∈ [20..90] -> 200 OK, мок-PLC получил ровно одну запись."""
+        """750 означает 75.0 °C и находится в диапазоне [200..900]."""
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 75})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 750},
+        )
 
         assert response.status_code == 200
-        assert fake.calls == [(40001, 75)]
+        assert fake.calls == [(4, 750)]
 
         body = response.json()
         assert body["status"] == "ok"
         assert body["command"] == "write_register"
-        assert body["value"] == 75
+        assert body["value"] == 750
 
-    @pytest.mark.parametrize("value", [20, 90])
-    def test_boundary_values_accepted(self, tmp_path, value):
-        """Границы диапазона включительны — частая ошибка off-by-one."""
+    @pytest.mark.parametrize("value", [200, 900])
+    def test_boundary_values_accepted(self, tmp_path, value: int):
+        """Минимум и максимум диапазона включены."""
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": value})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": value},
+        )
 
         assert response.status_code == 200
-        assert fake.calls == [(40001, value)]
-
-
-# ---------------------------------------------------------------------------
-# 3. Ошибки транспорта PLC отделяются от ошибок политики
-# ---------------------------------------------------------------------------
+        assert fake.calls == [(4, value)]
 
 
 class TestPLCFailure:
     def test_plc_connection_error_maps_to_502(self, tmp_path):
-        """
-        Команда ВАЛИДНА по лимитам, но PLC недоступен.
-        Это 502 Bad Gateway (проблема нижележащего сервиса),
-        а НЕ 422 — иначе оператор подумает, что ему запретили уставку.
-        """
         client, fake = make_client(
             tmp_path,
             commands=FakeCommandService(
@@ -241,14 +185,16 @@ class TestPLCFailure:
             ),
         )
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 75})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 750},
+        )
 
         assert response.status_code == 502
-        # Команда всё равно была передана в клиент (решение принято, связь сломалась)
-        assert fake.calls == [(40001, 75)]
+        # Safety пропустил команду; транспортный клиент был вызван.
+        assert fake.calls == [(4, 750)]
 
     def test_502_body_does_not_leak_internals(self, tmp_path):
-        """Наружу — общая фраза; детали остаются в логах сервера."""
         client, _ = make_client(
             tmp_path,
             commands=FakeCommandService(
@@ -256,22 +202,23 @@ class TestPLCFailure:
             ),
         )
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 75})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 750},
+        )
 
+        assert response.status_code == 502
         assert "socket timeout" not in str(response.json())
-
-
-# ---------------------------------------------------------------------------
-# 4. Валидация схемы запроса (Pydantic) — до бизнес-логики
-# ---------------------------------------------------------------------------
 
 
 class TestRequestValidation:
     def test_out_of_uint16_range_rejected_by_schema(self, tmp_path):
-        """value=70000 > 65535 — отсекается ещё до Safety Limits."""
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001, "value": 70000})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4, "value": 70000},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
@@ -279,7 +226,10 @@ class TestRequestValidation:
     def test_negative_register_rejected(self, tmp_path):
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": -1, "value": 50})
+        response = client.post(
+            WRITE_URL,
+            json={"register": -1, "value": 50},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
@@ -287,46 +237,44 @@ class TestRequestValidation:
     def test_missing_field_rejected(self, tmp_path):
         client, fake = make_client(tmp_path)
 
-        response = client.post(WRITE_URL, json={"register": 40001})
+        response = client.post(
+            WRITE_URL,
+            json={"register": 4},
+        )
 
         assert response.status_code == 422
         assert fake.calls == []
 
     def test_non_integer_value_rejected(self, tmp_path):
-        """Защита от 'семьдесят пять' из фронтенда."""
-        client, fake = make_client(
-            tmp_path,
-        )
+        client, fake = make_client(tmp_path)
 
         response = client.post(
-            WRITE_URL, json={"register": 40001, "value": "seventy-five"},
+            WRITE_URL,
+            json={"register": 4, "value": "seventy-five"},
         )
 
         assert response.status_code == 422
         assert fake.calls == []
 
 
-# ---------------------------------------------------------------------------
-# 5. Порядок проверок: safety BEFORE write (порядок важен!)
-# ---------------------------------------------------------------------------
-
-
 class TestCheckOrdering:
     def test_safety_checked_before_plc_even_when_plc_available(self, tmp_path):
-        """
-        Специальный тест-страж: даже если PLC полностью доступен
-        (мок никогда не падает), опасная команда не проходит.
-        Это защищает от будущего рефакторинга, в котором кто-то
-        переставит validate() ПОСЛЕ write_register().
-        """
         client, fake = make_client(tmp_path)
 
-        dangerous = [(40001, 0), (40001, 91), (40001, 10000), (40002, 50)]
+        dangerous_commands = [
+            (4, 199),
+            (4, 901),
+            (4, 10000),
+            (5, 500),
+        ]
 
-        for register, value in dangerous:
+        for register, value in dangerous_commands:
             response = client.post(
-                WRITE_URL, json={"register": register, "value": value},
+                WRITE_URL,
+                json={"register": register, "value": value},
             )
-            assert response.status_code == 422, f"{register}={value} пропущено!"
+            assert response.status_code == 422, (
+                f"Команда register={register}, value={value} была пропущена"
+            )
 
-        assert fake.calls == [], "Ни одна опасная команда не могла дойти до PLC"
+        assert fake.calls == [], "Запрещённые команды не должны доходить до PLC"
