@@ -23,10 +23,13 @@ class StorageService:
         self.filter = deadband
 
     async def process_tag(self, tag: Tag) -> bool:
-        if not self.filter.should_store(tag):
+        # Проверка Deadband не меняет базовую точку. Она обновляется только
+        # после того, как Database.save_tag завершился без исключения (commit).
+        if not self.filter.would_store(tag):
             return False
 
         await self.database.save_tag(tag)
+        self.filter.mark_stored(tag)
         return True
 
     async def run(self) -> None:
