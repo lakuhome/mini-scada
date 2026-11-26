@@ -1,0 +1,18 @@
+========== 3. AFTER REQUEST ==========
+Thu Nov 26 11:27:22 MSK 2026
+  PID NLWP   RSS    VSZ     TIME %CPU STAT
+  113    2 47992 131460 00:00:01  0.3 Sl+
+FD count:
+10
+Open descriptors:
+total 0
+lrwx------ 1 piray piray 64 Nov 26 11:21 0 -> /dev/pts/0
+lrwx------ 1 piray piray 64 Nov 26 11:21 1 -> /dev/pts/0
+lrwx------ 1 piray piray 64 Nov 26 11:21 2 -> /dev/pts/0
+lrwx------ 1 piray piray 64 Nov 26 11:21 3 -> anon_inode:[eventpoll]
+lrwx------ 1 piray piray 64 Nov 26 11:21 4 -> socket:[999]
+lrwx------ 1 piray piray 64 Nov 26 11:21 5 -> socket:[1000]
+lrwx------ 1 piray piray 64 Nov 26 11:21 6 -> /tmp/pz03-piray26/scada_lab.db
+lrwx------ 1 piray piray 64 Nov 26 11:21 7 -> /tmp/pz03-piray26/scada_lab.db-wal
+lrwx------ 1 piray piray 64 Nov 26 11:21 8 -> /tmp/pz03-piray26/scada_lab.db-shm
+lrwx------ 1 piray piray 64 Nov 26 11:21 9 -> socket:[1510]
