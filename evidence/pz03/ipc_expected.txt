@@ -1,0 +1,4 @@
+Fragmented response: successful reconstruction.
+Truncated response: RuntimeError.
+Oversized response: ValueError.
+Sender keeps socket open: TimeoutError.

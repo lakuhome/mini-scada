@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- /home/piray/.venvs/mini-scada/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/c/Project/mini-scada
+configfile: pytest.ini
+plugins: anyio-4.16.0, asyncio-1.5.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+src/tests/test_ipc_pz03.py::test_fragmented_response PASSED              [ 25%]
+src/tests/test_ipc_pz03.py::test_truncated_response PASSED               [ 50%]
+src/tests/test_ipc_pz03.py::test_response_size_limit PASSED              [ 75%]
+src/tests/test_ipc_pz03.py::test_sender_does_not_close_socket PASSED     [100%]
+
+============================== 4 passed in 6.25s ===============================
