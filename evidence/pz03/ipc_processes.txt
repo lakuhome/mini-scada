@@ -1,0 +1,15 @@
+=== PROCESS IDENTIFIERS ===
+  PID  PPID NLWP STAT CMD
+  394    11    2 Sl+  python -m uvicorn src.lab.api_server:app --host 127.0.0.1 --port 8000
+  442   283    1 S    python -m src.lab.api_client
+=== SERVER SOCKETS ===
+lrwx------ 1 piray piray 64 Nov 26 11:59 10 -> socket:[3271]
+lrwx------ 1 piray piray 64 Nov 26 11:59 4 -> socket:[3144]
+lrwx------ 1 piray piray 64 Nov 26 11:59 5 -> socket:[3145]
+lrwx------ 1 piray piray 64 Nov 26 11:59 9 -> socket:[3014]
+=== CLIENT SOCKETS ===
+lrwx------ 1 piray piray 64 Nov 26 11:59 3 -> socket:[4262]
+=== TCP CONNECTION STATE ===
+State Recv-Q Send-Q Local Address:Port  Peer Address:Port Process                         
+ESTAB 0      0          127.0.0.1:51364    127.0.0.1:8000  users:(("python",pid=442,fd=3))
+ESTAB 0      0          127.0.0.1:8000     127.0.0.1:51364 users:(("python",pid=394,fd=10))
