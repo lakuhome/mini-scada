@@ -6,7 +6,7 @@
 
 Репозиторий: https://github.com/lakuhome/mini-scada
 
-Версия реализации: `2a69ff11473867cb0a5f5065ca68f3dbab565905`
+Версия реализации: `5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba`
 
 ## 1. Границы исследуемого участка
 
@@ -20,13 +20,13 @@
 
 | Ресурс | Владелец | Потребители | Получение и освобождение | Поведение при отказе |
 |---|---|---|---|---|
-| Соединение SQLite | Database; жизненным циклом управляет lifespan API | StorageService, REST API | database.py:20–64, 183–195. Подключение через sqlite3.connect, закрытие через close. При обычном исключении инициализации соединение закрывается | Исключение передаётся вызывающему коду. Ошибка подключения препятствует штатному запуску приложения |
-| Файл SQLite | SQLite через Database | Методы записи и чтения истории | database.py:27–32, 183–188. Открывается при подключении, дескриптор освобождается при закрытии соединения | При недоступности пути возникает исключение. Файл не удаляется при штатном закрытии |
-| WAL и SHM | SQLite | Database | database.py:34–35, 183–188. Управляются SQLite в режиме WAL | Ошибка операции передаётся вызывающему коду |
-| Курсор чтения | Database._fetch_history | Database.get_history | database.py:177–181. Создаётся через execute, закрывается в finally, включая ошибку fetchall | Исключение передаётся вызывающему коду |
-| Транзакция записи | Database.save_tag | StorageService | database.py:95–106. INSERT с последующим commit | При исключении Deadband не обновляется. Явный rollback отсутствует, что является ограничением реализации |
-| Асинхронная блокировка | Database | connect, save_tag, get_history, close | database.py:18, 24, 96, 126, 184. Управляется через async with | При выходе из блока, включая исключение, блокировка освобождается. Отдельный тайм-аут ожидания не задан |
-| Рабочие потоки | Исполнитель asyncio | Database | database.py:28–32, 97–106, 127–134, 188. Операции SQLite выполняются через asyncio.to_thread | Исключения передаются ожидающей корутине. Отмена корутины не гарантирует немедленной остановки рабочего потока |
+| Соединение SQLite | Database; жизненным циклом управляет lifespan API | StorageService, REST API | database.py:20–64, 187–199. Подключение через sqlite3.connect, закрытие через close. При обычном исключении инициализации соединение закрывается | Исключение передаётся вызывающему коду. Ошибка подключения препятствует штатному запуску приложения |
+| Файл SQLite | SQLite через Database | Методы записи и чтения истории | database.py:27–32, 187–192. Открывается при подключении, дескриптор освобождается при закрытии соединения | При недоступности пути возникает исключение. Файл не удаляется при штатном закрытии |
+| WAL и SHM | SQLite | Database | database.py:34–35, 187–192. Управляются SQLite в режиме WAL | Ошибка операции передаётся вызывающему коду |
+| Курсор чтения | Database._fetch_history | Database.get_history | database.py:181–185. Создаётся через execute, закрывается в finally, включая ошибку fetchall | Исключение передаётся вызывающему коду |
+| Транзакция записи | Database.save_tag | StorageService | database.py:95–110. INSERT с последующим commit | При исключении Deadband не обновляется. При исключении INSERT или commit выполняется попытка rollback |
+| Асинхронная блокировка | Database | connect, save_tag, get_history, close | database.py:18, 24, 96, 130, 188. Управляется через async with | При выходе из блока, включая исключение, блокировка освобождается. Отдельный тайм-аут ожидания не задан |
+| Рабочие потоки | Исполнитель asyncio | Database | database.py:28–32, 98–110, 131–138, 192. Операции SQLite выполняются через asyncio.to_thread | Исключения передаются ожидающей корутине. Отмена корутины не гарантирует немедленной остановки рабочего потока |
 | Очередь подписки | InMemoryBus; за отписку отвечает StorageService | StorageService | bus.py:33–48; service.py:35–60. Создаётся при subscribe, удаляется из списка подписчиков через unsubscribe в finally | При ошибке обработки элемента вызывается task_done. При отмене задачи выполняется отписка |
 | Задача архивирования | lifespan приложения | StorageService | api/main.py:189–208, 234–259. Создаётся через create_task. При завершении выполняются drain, cancel и gather | Ошибка отдельной записи журналируется. Ошибка drain также журналируется. Отдельный тайм-аут drain отсутствует |
 | Слушающий TCP-сокет | Uvicorn | REST API | Создаётся при запуске Uvicorn. При штатной остановке освобождается сервером. Точка подключения приложения: lab/api_server.py:16 | Ошибка привязки порта препятствует запуску сервера |
@@ -82,20 +82,20 @@ StorageService получает очередь подписки от InMemoryBus
 - Для SQLite используется стандартный тайм-аут подключения библиотеки sqlite3; отдельное значение не задано.
 - При ошибке архивирования обработчик продолжает работу, но не подтверждает сохранение неудачного значения.
 - Текущие значения InMemoryBus могут оставаться доступными независимо от ошибки архивирования.
-- Явный rollback при ошибке commit не реализован.
+- При ошибке INSERT или commit выполняется попытка rollback.
 - Отдельный тайм-аут завершения очереди архивирования отсутствует.
 
 ## 7. Ссылки на реализацию
 
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/core/bus.py#L33-L48
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/core/deadband.py#L22-L39
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/storage/service.py#L25-L60
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/storage/database.py#L20-L64
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/storage/database.py#L95-L106
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/storage/database.py#L177-L195
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/api/main.py#L184-L259
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/lab/api_client.py#L25-L91
-- https://github.com/lakuhome/mini-scada/blob/2a69ff11473867cb0a5f5065ca68f3dbab565905/src/lab/api_server.py#L8-L16
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/core/bus.py#L33-L48
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/core/deadband.py#L22-L39
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/service.py#L25-L60
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L20-L64
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L95-L110
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L181-L199
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/api/main.py#L184-L259
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/lab/api_client.py#L25-L91
+- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/lab/api_server.py#L8-L16
 
 ## 8. Ограничения исследования
 
@@ -109,4 +109,4 @@ StorageService получает очередь подписки от InMemoryBus
 
 Определены системные границы исследуемого участка, владельцы и потребители ресурсов, порядок получения и освобождения, поведение при штатном завершении и отказах.
 
-Выявлены ограничения обработки транзакционных ошибок SQLite и ожидания завершения архивной очереди.
+Реализован откат транзакции при обычном исключении записи. Отдельный тайм-аут завершения архивной очереди отсутствует.
