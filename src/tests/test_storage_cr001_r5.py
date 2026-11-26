@@ -97,3 +97,63 @@ async def test_r5_early_shutdown_unsubscribes_storage_and_closes_database(tmp_pa
 
     assert db._connection is None
     assert len(bus._subscribers) == 0
+
+
+
+
+@pytest.mark.asyncio
+async def test_r5_commit_failure_rolls_back_transaction(tmp_path):
+    class FailingCommitConnection(sqlite3.Connection):
+        fail_commit = False
+
+        def commit(self):
+            if self.fail_commit:
+                raise sqlite3.OperationalError(
+                    "simulated commit failure"
+                )
+            return super().commit()
+
+    path = str(tmp_path / "commit_failure.db")
+
+    db = Database(path)
+    await db.connect()
+    await db.close()
+
+    connection = sqlite3.connect(
+        path,
+        factory=FailingCommitConnection,
+        check_same_thread=False,
+    )
+
+    db._connection = connection
+
+    deadband = DeadbandFilter(threshold=1.0)
+    service = StorageService(InMemoryBus(), deadband, db)
+    tag = Tag(id="COMMIT_FAIL", value=20.0, quality="GOOD")
+
+    try:
+        connection.fail_commit = True
+
+        with pytest.raises(
+            sqlite3.OperationalError,
+            match="simulated commit failure",
+        ):
+            await service.process_tag(tag)
+
+        assert not connection.in_transaction
+        assert await db.get_history("COMMIT_FAIL") == []
+        assert deadband.would_store(tag) is True
+
+        connection.fail_commit = False
+
+        assert await service.process_tag(tag) is True
+
+        history = await db.get_history("COMMIT_FAIL")
+        assert len(history) == 1
+        assert history[0].value == 20.0
+
+    finally:
+        await db.close()
+
+    assert db._connection is None
+
