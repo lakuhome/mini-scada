@@ -6,7 +6,7 @@
 
 Репозиторий: https://github.com/lakuhome/mini-scada
 
-Версия реализации: `5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba`
+Версия реализации: `89ac36a29357660e8c7b7fef8e976f6df9a3f6c0`
 
 ## 1. Границы исследуемого участка
 
@@ -22,16 +22,16 @@
 |---|---|---|---|---|
 | Соединение SQLite | Database; жизненным циклом управляет lifespan API | StorageService, REST API | database.py:20–64, 187–199. Подключение через sqlite3.connect, закрытие через close. При обычном исключении инициализации соединение закрывается | Исключение передаётся вызывающему коду. Ошибка подключения препятствует штатному запуску приложения |
 | Файл SQLite | SQLite через Database | Методы записи и чтения истории | database.py:27–32, 187–192. Открывается при подключении, дескриптор освобождается при закрытии соединения | При недоступности пути возникает исключение. Файл не удаляется при штатном закрытии |
-| WAL и SHM | SQLite | Database | database.py:34–35, 187–192. Управляются SQLite в режиме WAL | Ошибка операции передаётся вызывающему коду |
+| WAL и SHM | SQLite | Database | database.py:34, 187–192. Управляются SQLite в режиме WAL | Ошибка операции передаётся вызывающему коду |
 | Курсор чтения | Database._fetch_history | Database.get_history | database.py:181–185. Создаётся через execute, закрывается в finally, включая ошибку fetchall | Исключение передаётся вызывающему коду |
 | Транзакция записи | Database.save_tag | StorageService | database.py:95–110. INSERT с последующим commit | При исключении Deadband не обновляется. При исключении INSERT или commit выполняется попытка rollback |
 | Асинхронная блокировка | Database | connect, save_tag, get_history, close | database.py:18, 24, 96, 130, 188. Управляется через async with | При выходе из блока, включая исключение, блокировка освобождается. Отдельный тайм-аут ожидания не задан |
 | Рабочие потоки | Исполнитель asyncio | Database | database.py:28–32, 98–110, 131–138, 192. Операции SQLite выполняются через asyncio.to_thread | Исключения передаются ожидающей корутине. Отмена корутины не гарантирует немедленной остановки рабочего потока |
 | Очередь подписки | InMemoryBus; за отписку отвечает StorageService | StorageService | bus.py:33–48; service.py:35–60. Создаётся при subscribe, удаляется из списка подписчиков через unsubscribe в finally | При ошибке обработки элемента вызывается task_done. При отмене задачи выполняется отписка |
-| Задача архивирования | lifespan приложения | StorageService | api/main.py:189–208, 234–259. Создаётся через create_task. При завершении выполняются drain, cancel и gather | Ошибка отдельной записи журналируется. Ошибка drain также журналируется. Отдельный тайм-аут drain отсутствует |
+| Задача архивирования | lifespan приложения | StorageService | api/main.py:185–208, 234–259. Создаётся через create_task. При завершении выполняются drain, cancel и gather | Ошибка отдельной записи журналируется. Ошибка drain также журналируется. Отдельный тайм-аут drain отсутствует |
 | Слушающий TCP-сокет | Uvicorn | REST API | Создаётся при запуске Uvicorn. При штатной остановке освобождается сервером. Точка подключения приложения: lab/api_server.py:16 | Ошибка привязки порта препятствует запуску сервера |
 | TCP-сокет серверного соединения | Uvicorn | HTTP-обработчики | Получается при подключении клиента, освобождается после завершения обмена или разрыва соединения | Разрыв отдельного соединения не останавливает сервер, что подтверждено экспериментом Р3 |
-| TCP-сокет клиента | api_client.request | Лабораторный клиент | lab/api_client.py:37–57. Создаётся через socket.create_connection, закрывается контекстным менеджером with | Тайм-аут подключения и операций сокета — 4 секунды. При ошибке обмена main возвращает код 2 |
+| TCP-сокет клиента | api_client.request | Лабораторный клиент | lab/api_client.py:25–57. Создаётся через socket.create_connection, закрывается контекстным менеджером with | Тайм-аут подключения и операций сокета — 4 секунды. При ошибке обмена main возвращает код 2 |
 | Стандартные потоки вывода | Среда выполнения Python | REST API, StorageService, IPC-клиент | service.py:8, 49–53; lab/api_client.py:96–97, 138. Используются для вывода результатов и ошибок | Специальное восстановление при отказе вывода не реализовано |
 
 ## 3. Внутреннее состояние компонентов
@@ -87,15 +87,15 @@ StorageService получает очередь подписки от InMemoryBus
 
 ## 7. Ссылки на реализацию
 
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/core/bus.py#L33-L48
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/core/deadband.py#L22-L39
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/service.py#L25-L60
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L20-L64
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L95-L110
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/storage/database.py#L181-L199
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/api/main.py#L184-L259
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/lab/api_client.py#L25-L91
-- https://github.com/lakuhome/mini-scada/blob/5dbc3a99c11a1bb336ab53aa25ceeabe7f48acba/src/lab/api_server.py#L8-L16
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/core/bus.py#L33-L48
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/core/deadband.py#L22-L39
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/storage/service.py#L25-L60
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/storage/database.py#L20-L64
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/storage/database.py#L95-L110
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/storage/database.py#L181-L199
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/api/main.py#L184-L259
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/lab/api_client.py#L25-L91
+- https://github.com/lakuhome/mini-scada/blob/89ac36a29357660e8c7b7fef8e976f6df9a3f6c0/src/lab/api_server.py#L8-L16
 
 ## 8. Ограничения исследования
 

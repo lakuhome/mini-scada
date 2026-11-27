@@ -5,7 +5,7 @@ on:
     branches: [ main ]
     tags: [ 'kt*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, practice/pz03 ]
 
 jobs:
   test:
