@@ -2,52 +2,45 @@ from .models import Tag
 
 
 class DeadbandFilter:
-    """
-    Фильтр технологического шума датчиков (зона нечувствительности).
+    """Фильтр значимых изменений тегов.
 
-    Отсекает микроколебания технологических параметров, если абсолютное
-    отклонение от последнего сохраненного значения меньше заданного порога.
+    Для обычного использования доступны два этапа:
+      1. would_store() проверяет необходимость архивирования без изменения состояния.
+      2. mark_stored() обновляет базовую точку только после успешной записи.
 
-    Attributes:
-        threshold: Величина зоны нечувствительности в единицах измерения датчика.
+    should_store() оставлен как совместимый одноступенчатый метод для участков,
+    где решение не связано с внешним хранилищем. StorageService должен применять
+    двухфазный интерфейс, чтобы ошибка SQLite не сдвигала базовую точку Deadband.
     """
 
     def __init__(self, threshold: float):
-        """
-        Инициализирует фильтр с заданным порогом.
-
-        Args:
-            threshold: Порог нечувствительности (вещественное число >= 0).
-        """
+        if threshold < 0:
+            raise ValueError("threshold must be >= 0")
         self.threshold = threshold
         self._last_values: dict[str, tuple[float, str]] = {}
 
-    def should_store(self, tag: Tag) -> bool:
+    def would_store(self, tag: Tag) -> bool:
+        """Возвращает решение фильтра, не изменяя последнее сохранённое состояние."""
         last_state = self._last_values.get(tag.id)
 
         if last_state is None:
-            self._last_values[tag.id] = (
-                tag.value,
-                tag.quality,
-            )
             return True
 
         last_value, last_quality = last_state
 
-        # Изменение достоверности сохраняем независимо от deadband.
+        # Изменение качества архивируется независимо от величины изменения.
         if tag.quality != last_quality:
-            self._last_values[tag.id] = (
-                tag.value,
-                tag.quality,
-            )
             return True
 
-        # Одинаковые значения отфильтровываются.
-        if abs(tag.value - last_value) >= self.threshold:
-            self._last_values[tag.id] = (
-                tag.value,
-                tag.quality,
-            )
-            return True
+        return abs(tag.value - last_value) >= self.threshold
 
-        return False
+    def mark_stored(self, tag: Tag) -> None:
+        """Фиксирует базовую точку после подтверждённого успешного сохранения."""
+        self._last_values[tag.id] = (tag.value, tag.quality)
+
+    def should_store(self, tag: Tag) -> bool:
+        """Совместимый метод: проверить и сразу зафиксировать решение."""
+        if not self.would_store(tag):
+            return False
+        self.mark_stored(tag)
+        return True
