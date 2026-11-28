@@ -94,16 +94,20 @@ class Database:
 
         connection = await self._get_connection()
         async with self._lock:
-            await asyncio.to_thread(
-                connection.execute,
-                """
-                INSERT INTO tag_history
-                    (tag_id, value, timestamp, quality)
-                VALUES (?, ?, ?, ?)
-                """,
-                (tag.id, value, tag.timestamp, str(quality.value)),
-            )
-            await asyncio.to_thread(connection.commit)
+            try:
+                await asyncio.to_thread(
+                    connection.execute,
+                    """
+                    INSERT INTO tag_history
+                        (tag_id, value, timestamp, quality)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (tag.id, value, tag.timestamp, str(quality.value)),
+                )
+                await asyncio.to_thread(connection.commit)
+            except Exception:
+                await asyncio.to_thread(connection.rollback)
+                raise
 
     async def get_history(
         self,

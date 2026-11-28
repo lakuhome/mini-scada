@@ -1,0 +1,11 @@
+=== EXPECTED ===
+Client detects interrupted exchange.
+SERVER PID: 394
+=== BEFORE SERVER TERMINATION ===
+State Recv-Q Send-Q Local Address:Port  Peer Address:Port Process                          
+ESTAB 0      0          127.0.0.1:8000     127.0.0.1:33052 users:(("python",pid=394,fd=10))
+ESTAB 0      0          127.0.0.1:33052    127.0.0.1:8000  users:(("python",pid=493,fd=3)) 
+API client error: Incomplete HTTP response: b''
+Client exit code: 2
+=== AFTER SERVER TERMINATION ===
+State Recv-Q Send-Q Local Address:Port Peer Address:PortProcess

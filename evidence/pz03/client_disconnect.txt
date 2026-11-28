@@ -1,0 +1,12 @@
+=== EXPECTED ===
+Client terminates; server releases connection.
+=== BEFORE CLIENT TERMINATION ===
+CLIENT PID: 479
+State Recv-Q Send-Q Local Address:Port  Peer Address:Port Process                         
+ESTAB 0      0          127.0.0.1:56762    127.0.0.1:8000  users:(("python",pid=479,fd=3))
+ESTAB 0      0          127.0.0.1:8000     127.0.0.1:56762 users:(("python",pid=394,fd=10))
+Client exit code: 143
+=== AFTER CLIENT TERMINATION ===
+State Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+=== SERVER HEALTH ===
+{"status":"ok"}

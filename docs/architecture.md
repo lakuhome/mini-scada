@@ -84,3 +84,25 @@ tag = bus.get("Boiler_Temp_01")
 * `src/api/` — веб-сервер на FastAPI (WebSocket-канал, REST API для истории и конфигураций).
 * `frontend/` — клиентское веб-приложение на React (конструктор мнемосхем и живой мониторинг).
 * `src/tests/` — набор автоматических тестов ядра на pytest.
+
+## Согласованность архивирования (CR-001)
+
+Цепочка обработки исторических данных:
+
+InMemoryBus → StorageService → DeadbandFilter → Database → SQLite.
+
+StorageService проверяет необходимость архивирования через DeadbandFilter.would_store.
+
+При необходимости сохранения вызывается Database.save_tag. Только после успешного завершения записи и commit выполняется DeadbandFilter.mark_stored.
+
+При ошибке записи подтверждение состояния Deadband не выполняется.
+
+Владельцем соединения SQLite остаётся Database. Жизненным циклом подключения управляет lifespan приложения.
+
+StorageService использует соединение опосредованно через Database без передачи владения ресурсом.
+
+Архитектурное решение: [ADR-003](adr/ADR-003-storage-consistency.md).
+
+Системные границы: [Р4](pz03_resource_boundaries.md).
+
+Анализ изменения требований: [CR-001](pz03_cr001.md).

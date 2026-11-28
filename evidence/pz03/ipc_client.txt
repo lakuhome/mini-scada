@@ -1,0 +1,71 @@
+GET /api/health -> HTTP 200
+{
+  "status": "ok"
+}
+GET /api/tags -> HTTP 200
+{
+  "count": 6,
+  "tags": [
+    {
+      "id": "Alarm_Code_01",
+      "value": 0.0,
+      "timestamp": 1795682848.0675437,
+      "quality": "BAD"
+    },
+    {
+      "id": "Boiler_Temp_01",
+      "value": 0.0,
+      "timestamp": 1795682848.067321,
+      "quality": "BAD"
+    },
+    {
+      "id": "LAB_DEMO_TEMP",
+      "value": 23.5,
+      "timestamp": 1795682848.1079297,
+      "quality": "GOOD"
+    },
+    {
+      "id": "Pump_01_Status",
+      "value": 0.0,
+      "timestamp": 1795682848.067529,
+      "quality": "BAD"
+    },
+    {
+      "id": "System_Pressure_01",
+      "value": 0.0,
+      "timestamp": 1795682848.067473,
+      "quality": "BAD"
+    },
+    {
+      "id": "Temp_Setpoint_01",
+      "value": 0.0,
+      "timestamp": 1795682848.0675528,
+      "quality": "BAD"
+    }
+  ]
+}
+GET /api/tags/LAB_DEMO_TEMP/history?limit=10 -> HTTP 200
+{
+  "tag_id": "LAB_DEMO_TEMP",
+  "count": 2,
+  "history": [
+    {
+      "id": "LAB_DEMO_TEMP",
+      "value": 23.5,
+      "timestamp": 1795682848.1079297,
+      "quality": "GOOD"
+    },
+    {
+      "id": "LAB_DEMO_TEMP",
+      "value": 23.5,
+      "timestamp": 1795681206.2877147,
+      "quality": "GOOD"
+    }
+  ]
+}
+GET /api/tags/NO_SUCH_LAB_TAG -> HTTP 404
+{
+  "detail": "Tag 'NO_SUCH_LAB_TAG' not found"
+}
+Итого: /api/tags вернул count=6
+API client finished; каждый TCP-сокет закрыт после ответа.

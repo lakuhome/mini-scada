@@ -16,6 +16,8 @@ htmlcov/
 
 # База данных
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # Файлы IDE и редакторов

@@ -1,0 +1,10 @@
+Successful save: one history record, Deadband updated.
+Acquisition failure: no active connection.
+INSERT failure: no false success, Deadband unchanged.
+Early shutdown: connection closed, subscriber removed.
+COMMIT failure: transaction rolled back, history empty,
+Deadband unchanged, subsequent save succeeds.
+
+Note: expected results were documented in the experiment
+instructions before execution. This file was created
+after the test execution.

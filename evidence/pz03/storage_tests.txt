@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- /home/piray/.venvs/mini-scada/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/c/Project/mini-scada
+configfile: pytest.ini
+plugins: anyio-4.16.0, asyncio-1.5.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+src/tests/test_storage_cr001_r5.py::test_r5_successful_save_updates_deadband_only_after_commit PASSED [ 14%]
+src/tests/test_storage_cr001_r5.py::test_r5_resource_acquisition_error_leaves_no_connection PASSED [ 28%]
+src/tests/test_storage_cr001_r5.py::test_cr001_sqlite_write_failure_does_not_advance_deadband PASSED [ 42%]
+src/tests/test_storage_cr001_r5.py::test_r5_early_shutdown_unsubscribes_storage_and_closes_database PASSED [ 57%]
+src/tests/test_storage_cr001_r5.py::test_r5_commit_failure_rolls_back_transaction PASSED [ 71%]
+src/tests/test_storage_transactional_deadband.py::test_deadband_state_is_not_committed_when_database_save_fails PASSED [ 85%]
+src/tests/test_storage_transactional_deadband.py::test_deadband_commits_only_after_successful_database_save PASSED [100%]
+
+============================== 7 passed in 1.39s ===============================
