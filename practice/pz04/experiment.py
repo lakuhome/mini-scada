@@ -124,7 +124,9 @@ async def archive(path, threshold):
     database = Database(str(path))
     tags = [Tag("TEMP_01", value, i, Quality.GOOD)
             for i, value in enumerate((20.0, 20.2, 20.5) * 60)]
-    service = StorageService(InMemoryBus(), database, DeadbandFilter(threshold))
+    service = StorageService(
+        bus=InMemoryBus(), deadband=DeadbandFilter(threshold), database=database
+    )
     async with database:
         start = perf_counter()
         for tag in tags:
